@@ -20,10 +20,18 @@ readonly JETBRAINS_DIR="/opt/jetbrains"
 readonly VSCODE_DIR="/opt/vscode"
 
 # URLs for downloading software, ensure to keep them updated
-readonly IDEA_URL=https://download.jetbrains.com/idea/ideaIU-2025.3.2.tar.gz
-readonly PYCHARM_URL=https://download.jetbrains.com/python/pycharm-2025.3.2.tar.gz
+readonly IDEA_URL=https://download.jetbrains.com/idea/ideaIU-2025.3.3.tar.gz
+readonly PYCHARM_URL=https://download.jetbrains.com/python/pycharm-2025.3.3.tar.gz
 
 readonly VSCODE_URL="https://code.visualstudio.com/sha/download?build=stable&os=linux-x64"
+
+# URLs for Java development tools
+readonly OPENJDK_URL=https://download.java.net/openjdk/jdk21/ri/openjdk-21+35_linux-x64_bin.tar.gz
+readonly GRADLE_URL=https://services.gradle.org/distributions/gradle-8.14.4-bin.zip
+
+readonly GRADLE_DIR="/opt/gradle"
+
+readonly bashrc_path="$HOME/.bashrc"
 
 # Function to install JetBrains IDEs (IntelliJ IDEA and PyCharm)
 # Downloads and installs IntelliJ IDEA Ultimate and PyCharm Professional
@@ -223,6 +231,180 @@ setup_docker_engine() {
   log_success "Docker engine setup completed"
 }
 
+# Function to install OpenJDK
+# Downloads and installs Oracle OpenJDK for Java development
+# Extracts JDK to /opt/java for system-wide access
+#
+# @details This function:
+#   - Downloads Oracle OpenJDK tarball
+#   - Creates /opt/java directory for installation
+#   - Extracts JDK to the installation directory
+#   - Sets up JAVA_HOME environment variable
+#
+# @return 0 if OpenJDK is installed successfully
+# @return 1 if OpenJDK installation fails
+install_openjdk() {
+  log_info "Installing OpenJDK ..."
+
+  # Download OpenJDK 21
+  log_info "Downloading OpenJDK ..."
+  if ! wget -P "$DOWNLOAD_DIR" "$OPENJDK_URL"; then
+    log_error "Failed to download OpenJDK"
+    return 1
+  fi
+
+  # Create Java installation directory in /opt
+  log_info "Creating /opt/java directory..."
+  if ! sudo mkdir -p /opt/java; then
+    log_error "Failed to create Java directory"
+    return 1
+  fi
+
+  # Extract OpenJDK 21 to installation directory
+  log_info "Extracting OpenJDK ..."
+  if ! sudo tar -xzf "$DOWNLOAD_DIR"/openjdk-21*.tar.gz -C /opt/java; then
+    log_error "Failed to extract OpenJDK"
+    return 1
+  fi
+
+  # Remove downloaded OpenJDK tarball
+  log_info "Removing downloaded OpenJDK files..."
+  rm -f "$DOWNLOAD_DIR"/openjdk-21*.tar.gz
+
+  # Set JAVA_HOME in /etc/environment for system-wide access
+  log_info "Setting JAVA_HOME environment variable..."
+  if ! echo "JAVA_HOME=/opt/java/jdk-21" | sudo tee -a /etc/environment > /dev/null; then
+    log_error "Failed to set JAVA_HOME"
+    return 1
+  fi
+
+  # Add Java to PATH for all users
+  if ! echo "export PATH=\$JAVA_HOME/bin:\$PATH" | sudo tee /etc/profile.d/java.sh > /dev/null; then
+    log_error "Failed to add Java to PATH"
+    return 1
+  fi
+
+  log_success "OpenJDK installed successfully"
+}
+
+# Function to install Gradle
+# Downloads and installs Gradle build tool for Java projects
+# Extracts Gradle to /opt/gradle for system-wide access
+#
+# @details This function:
+#   - Downloads Gradle binary distribution
+#   - Creates /opt/gradle directory for installation
+#   - Extracts Gradle to the installation directory
+#   - Sets up GRADLE_HOME environment variable and adds to PATH
+#
+# @return 0 if Gradle is installed successfully
+# @return 1 if Gradle installation fails
+install_gradle() {
+  log_info "Installing Gradle"
+
+  # Download Gradle 8.14.4
+  log_info "Downloading Gradle ."
+  if ! wget -P "$DOWNLOAD_DIR" "$GRADLE_URL"; then
+    log_error "Failed to download Gradle"
+    return 1
+  fi
+
+  # Install unzip if not already present
+  if ! command -v unzip &> /dev/null; then
+    log_info "Installing unzip..."
+    if ! sudo dnf -y install unzip; then
+      log_error "Failed to install unzip"
+      return 1
+    fi
+  fi
+
+  # Create Gradle installation directory in /opt
+  log_info "Creating /opt/gradle directory..."
+  if ! sudo mkdir -p "$GRADLE_DIR"; then
+    log_error "Failed to create Gradle directory"
+    return 1
+  fi
+
+  # Extract Gradle to installation directory
+  log_info "Extracting Gradle..."
+  if ! sudo unzip -q "$DOWNLOAD_DIR"/gradle-8*.zip -d "$GRADLE_DIR"; then
+    log_error "Failed to extract Gradle"
+    return 1
+  fi
+
+  # Remove downloaded Gradle zip file
+  log_info "Removing downloaded Gradle files..."
+  rm -f "$DOWNLOAD_DIR"/gradle-8*.zip
+
+  # Set GRADLE_HOME in /etc/environment for system-wide access
+  log_info "Setting GRADLE_HOME environment variable..."
+  if ! echo "GRADLE_HOME=/opt/gradle/gradle-8.14.4" | sudo tee -a /etc/environment > /dev/null; then
+    log_error "Failed to set GRADLE_HOME"
+    return 1
+  fi
+
+  # Add Gradle to PATH for all users
+  if ! echo "export PATH=\$GRADLE_HOME/bin:\$PATH" | sudo tee /etc/profile.d/gradle.sh > /dev/null; then
+    log_error "Failed to add Gradle to PATH"
+    return 1
+  fi
+
+  log_success "Gradle installed successfully"
+
+}
+
+# Function to configure shell environment
+# Configures .bashrc to include Java and Gradle
+# Creates backup of existing .bashrc before making changes
+#
+# @details This function:
+#   - Checks if configuration already exists to avoid duplication
+#   - Creates timestamped backup of .bashrc
+#   - Adds Java and Gradle path for user usage
+#
+# @return 0 if shell environment is configured successfully
+# @return 1 if shell configuration fails
+configure_shell_environment() {
+  local config_block="\n# Java and Gradle\n"
+  local java_home="export JAVA_HOME=/opt/java/jdk-21"
+  local gradle_home="export GRADLE_HOME=/opt/gradle/gradle-8.14.4"
+
+  # Ccombine the paths for Java and Gradle
+  local path_config='export PATH=$PATH:$JAVA_HOME/bin:$GRADLE_HOME/bin'
+
+  # Create backup of existing .bashrc with timestamp
+  if ! cp "$bashrc_path" "${bashrc_path}.backup.$(date +%Y%m%d_%H%M%S)"; then
+    log_warning "Failed to backup .bashrc"
+  fi
+
+  # Add configuration section header
+  if ! echo -e "$config_block" >> "$bashrc_path"; then
+    log_error "Failed to add configuration block to .bashrc"
+    return 1
+  fi
+
+  # Add JAVA_HOME
+  if ! echo -e "$java_home" >> "$bashrc_path"; then
+    log_error "Failed to add JAVA_HOME line to .bashrc"
+    return 1
+  fi
+
+  # Add GRADLE_HOME
+  if ! echo -e "$gradle_home" >> "$bashrc_path"; then
+    log_error "Failed to add GRADLE_HOME line to .bashrc"
+    return 1
+  fi
+
+  # Add PATH configuration
+  if ! echo -e "$path_config" >> "$bashrc_path"; then
+    log_error "Failed to add PATH line to .bashrc"
+    return 1
+  fi
+
+  log_success "Shell environment configured successfully"
+
+}
+
 # =============================================================================
 # MAIN EXECUTION
 # =============================================================================
@@ -234,6 +416,8 @@ setup_docker_engine() {
 # @details This function performs the following operations:
 #   1. Installs development IDEs (JetBrains, VS Code)
 #   2. Sets up Docker containerization platform
+#   3. Installs OpenJDK for Java development
+#   4. Installs Gradle build tool
 #
 # @param $1 Optional action parameter: "remove" to clean up IDEs and downloads
 # @return 0 if all operations complete successfully
@@ -242,13 +426,22 @@ main() {
     log_info "Starting comprehensive development environment and container's installation..."
 
     # Install JetBrains IDEs (IntelliJ IDEA and PyCharm)
-    install_jetbrains_ide
+    #install_jetbrains_ide
 
     # Install Visual Studio Code
-    install_vscode_ide
+    #install_vscode_ide
 
     # Set up Docker containerization platform
-    setup_docker_engine
+    #setup_docker_engine
+
+    #Install OpenJDK 21 for Java development
+    # install_openjdk
+
+    # Install Gradle 8.14.3 build tool
+    # install_gradle
+
+    # # Configure shell environment
+    configure_shell_environment
 
     log_success "Development environment and container's installation completed successfully!"
     log_info "Please restart your terminal or run 'source ~/.bashrc' to apply shell changes."
