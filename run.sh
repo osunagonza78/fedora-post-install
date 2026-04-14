@@ -40,7 +40,14 @@ BOLD='\033[1m'
 HIGHLIGHT='\033[7m'   # Reverse video for selected item
 
 # --- Configuration ---
-SCRIPT_DIR="./" # Change this if your scripts are in a subfolder
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/"
+
+# --- Auto-launch in tmux for split-pane view ---
+# If tmux is available and we're not already inside a session, re-exec inside one.
+# This enables the script output to appear in a split pane below the menu.
+if command -v tmux &>/dev/null && [[ -z "$TMUX" ]]; then
+    exec tmux new-session "bash \"${SCRIPT_DIR}run.sh\""
+fi
 
 # =============================================================================
 # FUNCTIONS
@@ -57,62 +64,70 @@ show_header() {
     echo ""
 }
 
-# Execute a script from the scripts directory with enhanced output display
-# Handles script execution with proper error checking and permissions
-# Shows command being executed and maintains menu visibility
-# 
+# Execute a script in a split pane (tmux) or inline fallback.
+# When running inside tmux the menu stays visible in the top pane while the
+# script's output streams in a new bottom pane.  When the script finishes the
+# user presses Enter to dismiss the bottom pane and the menu is immediately
+# ready for the next selection.
+#
 # @param script_name The filename of the script to execute (relative to SCRIPT_DIR)
-# @param window_title Title for the secondary window
-# @return 0 if successful, 1 if script not found or execution failed
-# Usage: run_script "script_name.sh" "Window Title"
+# @param window_title Human-readable title shown in the output pane header
+# @return 0 if successful, 1 if script not found
+# Usage: run_script "scripts/script_name.sh" "Display Title"
 run_script() {
     local script_name="$1"
     local window_title="$2"
     local full_path="${SCRIPT_DIR}${script_name}"
 
-    if [[ -f "$full_path" ]]; then
-        chmod +x "$full_path"  # Ensure it is executable
-        
-        # Show command being executed with menu still visible
-        echo -e "${PRIMARY}🚀 Executing: ${BOLD}bash $full_path${NC}"
-        echo -e "${INFO}Command: $window_title${NC}"
-        echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
-        echo -e "${INFO}Press Enter to start execution...${NC}"
-        read
-        
-        # Clear screen and show command header
-        clear
-        echo -e "${BANNER}##########################################################${NC}"
-        echo -e "${BANNER}#${NC}             ${BOLD}FEDORA POST-INSTALL TOOL${NC}               ${BANNER}#${NC}"
-        echo -e "${BANNER}##########################################################${NC}"
-        echo ""
-        echo -e "${PRIMARY}📊 ${BOLD}EXECUTING COMMAND:${NC}"
-        echo -e "${INFO}bash $full_path${NC}"
-        echo -e "${INFO}Title: $window_title${NC}"
-        echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
-        echo ""
-        
-        # Execute the script directly in the foreground
-        # This gives full control to the command output
-        bash "$full_path"
-        local exit_code=$?
-        
-        # Show completion status
-        echo ""
-        echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
-        if [[ $exit_code -eq 0 ]]; then
-            echo -e "${SUCCESS}✅ Command completed successfully!${NC}"
-        else
-            echo -e "${WARNING}⚠ Command completed with exit code: $exit_code${NC}"
-        fi
-        echo -e "${INFO}Press Enter to return to main menu...${NC}"
-        read
-        
-    else
+    if [[ ! -f "$full_path" ]]; then
         echo -e "\n${DANGER}✘ Error:${NC} ${script_name} not found in ${SCRIPT_DIR}"
         echo -e "${INFO}Press Enter to return to menu...${NC}"
         read
         return 1
+    fi
+
+    chmod +x "$full_path"
+
+    if [[ -n "$TMUX" ]]; then
+        # Split the current window: bottom pane (65 % of height) runs the script.
+        # The top pane keeps the menu and redraws itself while the script runs.
+        # $full_path and $window_title are expanded by the outer shell here;
+        # \$_rc is intentionally escaped so it is evaluated inside the pane.
+        tmux split-window -v -p 65 "
+            echo -e '\033[1;35m##########################################################\033[0m'
+            echo -e '\033[1;35m#\033[0m  \033[1m $window_title\033[0m'
+            echo -e '\033[1;35m##########################################################\033[0m'
+            echo ''
+            bash '$full_path'
+            _rc=\$?
+            echo ''
+            echo -e '\033[1;34m──────────────────────────────────────────────────────────\033[0m'
+            if [[ \$_rc -eq 0 ]]; then
+                echo -e '\033[1;32m✓ Completed successfully!\033[0m'
+            else
+                echo -e '\033[1;33m⚠ Completed with exit code: \$_rc\033[0m'
+            fi
+            echo -e '\033[0;36mPress Enter to close this panel...\033[0m'
+            read
+        "
+    else
+        # Fallback when tmux is unavailable: run inline (original behaviour).
+        clear
+        echo -e "${BANNER}##########################################################${NC}"
+        echo -e "${BANNER}#${NC}  ${BOLD}${window_title}${NC}"
+        echo -e "${BANNER}##########################################################${NC}"
+        echo ""
+        bash "$full_path"
+        local exit_code=$?
+        echo ""
+        echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
+        if [[ $exit_code -eq 0 ]]; then
+            echo -e "${SUCCESS}✓ Completed successfully!${NC}"
+        else
+            echo -e "${WARNING}⚠ Completed with exit code: $exit_code${NC}"
+        fi
+        echo -e "${INFO}Press Enter to return to menu...${NC}"
+        read
     fi
 }
 
@@ -211,44 +226,12 @@ main_loop() {
                 ;;
             "ENTER")
                 case $selected in
-                    0)
-                        echo -e "\n${SUCCESS}▶ RUNNING: System Configuration${NC}"
-                        echo -e "${INFO}Applying DNF optimizations and system tweaks...${NC}"
-                        echo -e "${INFO}The system will reboot after completion...${NC}"
-                        run_script scripts/system_configuration.sh "System Configuration"
-                        sleep 1  # Brief pause to let the terminal launch
-                        ;;
-                    1)
-                        echo -e "\n${SUCCESS}▶ RUNNING: Packages Installation${NC}"
-                        echo -e "${INFO}Setting up repositories and installing software...${NC}"
-                        run_script scripts/packages_installation.sh "Packages Installation"
-                        sleep 1
-                        ;;
-                    2)
-                        echo -e "\n${SUCCESS}▶ RUNNING: Development Tools Installation${NC}"
-                        echo -e "${INFO}Setting up development tools and installing container support...${NC}"
-                        run_script scripts/development_installation.sh "Development Tools Installation"
-                        sleep 1
-                        ;;
-                    3)
-                        echo -e "\n${SUCCESS}▶ RUNNING: Virtualization Stack Installation${NC}"
-                        echo -e "${INFO}Installing KVM/QEMU hypervisor and configuring libvirt...${NC}"
-                        run_script scripts/virtualization_installation.sh "Virtualization Stack Installation"
-                        sleep 1
-                        ;;
-                    4)
-                        echo -e "\n${WARNING}⚠ RUNNING: Secure Boot Configuration${NC}"
-                        echo -e "${INFO}Preparing MOK keys for kernel module signing...${NC}"
-                        echo -e "${INFO}The system will reboot after completion...${NC}"
-                        run_script scripts/configure_secureboot.sh "Secure Boot Configuration"
-                        sleep 1
-                        ;;
-                    5)
-                        echo -e "\n${SUCCESS}▶ RUNNING: Nvidia Driver Installation${NC}"
-                        echo -e "${INFO}Installing drivers. This may take several minutes...${NC}"
-                        run_script scripts/nvidia_drivers.sh "Nvidia Driver Installation"
-                        sleep 1
-                        ;;
+                    0) run_script scripts/system_configuration.sh    "System Configuration" ;;
+                    1) run_script scripts/packages_installation.sh   "Packages Installation" ;;
+                    2) run_script scripts/development_installation.sh "Development Tools Installation" ;;
+                    3) run_script scripts/virtualization_installation.sh "Virtualization Stack Installation" ;;
+                    4) run_script scripts/configure_secureboot.sh    "Secure Boot Configuration" ;;
+                    5) run_script scripts/nvidia_drivers.sh          "Nvidia Driver Installation" ;;
                     6)
                         echo -e "\n${DANGER}Exiting. Enjoy your new Fedora setup!${NC}"
                         exit 0
