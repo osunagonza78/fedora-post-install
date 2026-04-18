@@ -242,7 +242,7 @@ install_brave_browser() {
   log_info "Performing brave browser installation..."
   
   # Install required DNF plugins for repository management
-  if ! sudo dnf install dnf-plugins-core; then
+  if ! sudo dnf install -y dnf-plugins-core; then
     log_error "Failed to install dnf-plugins-core"
     return 1
   fi
@@ -387,7 +387,7 @@ configure_shell_environment() {
   local bashrc_path="$HOME/.bashrc"
   local config_block="\n# fastfetch and poshtheme\n"
   local fastfetch_line="fastfetch\n"
-  local poshtheme_line="eval \"\$(oh-my-posh init bash --config ~/.poshthemes/jandedobbeleer.omp.json)\n\""
+  local poshtheme_line="eval \"\$(oh-my-posh init bash --config ~/.poshthemes/jandedobbeleer.omp.json)\""
 
   # Check if configuration already exists in .bashrc
   if grep -q "fastfetch and poshtheme" "$bashrc_path" 2>/dev/null; then

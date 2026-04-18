@@ -89,11 +89,11 @@ run_script() {
     chmod +x "$full_path"
 
     if [[ -n "$TMUX" ]]; then
-        # Split the current window: bottom pane (65 % of height) runs the script.
-        # The top pane keeps the menu and redraws itself while the script runs.
+        # Split the current window: left pane (35% of width) runs the script.
+        # The right pane keeps the menu and redraws itself while the script runs.
         # $full_path and $window_title are expanded by the outer shell here;
         # \$_rc is intentionally escaped so it is evaluated inside the pane.
-        tmux split-window -v -p 65 "
+        tmux split-window -h -b -p 35 "
             echo -e '\033[1;35m##########################################################\033[0m'
             echo -e '\033[1;35m#\033[0m  \033[1m $window_title\033[0m'
             echo -e '\033[1;35m##########################################################\033[0m'

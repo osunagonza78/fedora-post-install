@@ -202,7 +202,7 @@ setup_docker_engine() {
   fi
 
   # Add Docker official repository
-  if ! sudo dnf-3 config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo; then
+  if ! sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo; then
     log_error "Failed to add Docker repository"
     return 1
   fi
@@ -369,7 +369,7 @@ configure_shell_environment() {
   local java_home="export JAVA_HOME=/opt/java/jdk-21"
   local gradle_home="export GRADLE_HOME=/opt/gradle/gradle-8.14.4"
 
-  # Ccombine the paths for Java and Gradle
+  # Combine the paths for Java and Gradle
   local path_config='export PATH=$PATH:$JAVA_HOME/bin:$GRADLE_HOME/bin'
 
   # Create backup of existing .bashrc with timestamp
@@ -426,19 +426,19 @@ main() {
     log_info "Starting comprehensive development environment and container's installation..."
 
     # Install JetBrains IDEs (IntelliJ IDEA and PyCharm)
-    #install_jetbrains_ide
+    install_jetbrains_ide
 
     # Install Visual Studio Code
-    #install_vscode_ide
+    install_vscode_ide
 
     # Set up Docker containerization platform
-    #setup_docker_engine
+    setup_docker_engine
 
     #Install OpenJDK 21 for Java development
-    # install_openjdk
+    install_openjdk
 
     # Install Gradle 8.14.3 build tool
-    # install_gradle
+    install_gradle
 
     # # Configure shell environment
     configure_shell_environment
