@@ -32,7 +32,7 @@ check_program_installed() {
   if ! command -v "$program" &> /dev/null; then
     log_error "The $program program is not installed."
     log_info "Installing $program..."
-    sudo dnf install "$program" -y &> /dev/null || { log_error "Failed to install $program."; exit 1; }
+    sudo dnf install "$program" -y || { log_error "Failed to install $program."; exit 1; }
   else
     log_info "The $program program is already installed."
   fi
@@ -52,29 +52,27 @@ install_packages() {
     return 1
   fi
 
-  log_info "Performing packages installation..."
-  local failed_packages=()
+  log_info "Checking ${#packages_array[@]} packages..."
+  local to_install=()
 
-  # Iterate through all packages in the provided list
   for program in "${packages_array[@]}"; do
-    if ! rpm -q "$program" &> /dev/null; then
-      log_info "Installing $program..."
-      if ! sudo dnf install "$program" -y &> /dev/null; then
-        log_error "Failed to install $program."
-        failed_packages+=("$program")
-      else
-        log_success "$program installed successfully"
-      fi
+    if ! rpm -q "$program" &>/dev/null; then
+      to_install+=("$program")
     else
-      log_info "The package $program is already installed."
+      log_info "Already installed: $program"
     fi
   done
-  
-  # Report any failed installations
-  if [ ${#failed_packages[@]} -gt 0 ]; then
-    log_error "Failed to install packages: ${failed_packages[*]}"
+
+  if [ ${#to_install[@]} -eq 0 ]; then
+    log_success "All packages are already installed"
+    return 0
+  fi
+
+  log_info "Installing ${#to_install[@]} packages: ${to_install[*]}"
+  if ! sudo dnf install -y "${to_install[@]}"; then
+    log_error "Package installation failed"
     return 1
   fi
-  
+
   log_success "All packages installed successfully"
 }

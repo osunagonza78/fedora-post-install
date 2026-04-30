@@ -43,10 +43,30 @@ HIGHLIGHT='\033[7m'   # Reverse video for selected item
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/"
 
 # --- Auto-launch in tmux for split-pane view ---
-# If tmux is available and we're not already inside a session, re-exec inside one.
-# This enables the script output to appear in a split pane below the menu.
+# We run on a dedicated tmux socket so our keybindings, styling, and
+# kill-server-on-exit don't leak into the user's main tmux config.
+FPI_TMUX_SOCKET="fpi-postinstall"
 if command -v tmux &>/dev/null && [[ -z "$TMUX" ]]; then
-    exec tmux new-session "bash \"${SCRIPT_DIR}run.sh\""
+    exec tmux -L "$FPI_TMUX_SOCKET" new-session "bash \"${SCRIPT_DIR}run.sh\""
+fi
+
+# --- One-time tmux configuration + pane layout ---
+# Configure ergonomic bindings/styling on this dedicated server, then spawn the
+# persistent right-side output pane.  The pane stays alive for the whole
+# session and is reused for every operation so the layout never flashes.
+if [[ -n "$TMUX" && -z "$FPI_OUTPUT_PANE" ]]; then
+    # Pane navigation: Alt+arrows move focus, mouse clicks focus a pane.
+    tmux bind-key -n M-Left  select-pane -L
+    tmux bind-key -n M-Right select-pane -R
+    tmux set-option -g mouse on
+    tmux set-option -g status off
+    tmux set-window-option -g pane-border-style        'fg=colour240'
+    tmux set-window-option -g pane-active-border-style 'fg=colour39,bold'
+
+    FPI_MENU_PANE=$(tmux display-message -p '#{pane_id}')
+    FPI_OUTPUT_PANE=$(tmux split-window -h -l 55% -P -F '#{pane_id}' -d \
+        "bash '${SCRIPT_DIR}lib/output_pane.sh' idle")
+    export FPI_MENU_PANE FPI_OUTPUT_PANE
 fi
 
 # =============================================================================
@@ -64,11 +84,26 @@ show_header() {
     echo ""
 }
 
-# Execute a script in a split pane (tmux) or inline fallback.
-# When running inside tmux the menu stays visible in the top pane while the
-# script's output streams in a new bottom pane.  When the script finishes the
-# user presses Enter to dismiss the bottom pane and the menu is immediately
-# ready for the next selection.
+# Paint the menu pane while a script is running in the right pane.
+# The menu can't accept input during the run (it is blocked on tmux wait-for),
+# so this placeholder tells the user where the action is and how to get back.
+# Usage: show_running_state "Window Title"
+show_running_state() {
+    local title="$1"
+    show_header
+    echo -e "  ${PRIMARY}▶${NC} ${BOLD}Running:${NC} ${title}"
+    echo ""
+    echo -e "  ${INFO}Output is streaming in the right pane.${NC}"
+    echo -e "  ${INFO}Press Enter there to return to the menu.${NC}"
+    echo ""
+    echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
+    echo -e "${INFO}Alt+←/→ switch panes  •  Click a pane to focus it${NC}"
+}
+
+# Execute a script in the persistent output pane (tmux) or inline (fallback).
+# Inside tmux the menu stays in the left pane and the script output streams in
+# the always-on right pane, driven by lib/output_pane.sh.  tmux wait-for keeps
+# the menu blocked until the user dismisses the run.
 #
 # @param script_name The filename of the script to execute (relative to SCRIPT_DIR)
 # @param window_title Human-readable title shown in the output pane header
@@ -88,28 +123,19 @@ run_script() {
 
     chmod +x "$full_path"
 
-    if [[ -n "$TMUX" ]]; then
-        # Split the current window: left pane (35% of width) runs the script.
-        # The right pane keeps the menu and redraws itself while the script runs.
-        # $full_path and $window_title are expanded by the outer shell here;
-        # \$_rc is intentionally escaped so it is evaluated inside the pane.
-        tmux split-window -h -b -p 35 "
-            echo -e '\033[1;35m##########################################################\033[0m'
-            echo -e '\033[1;35m#\033[0m  \033[1m $window_title\033[0m'
-            echo -e '\033[1;35m##########################################################\033[0m'
-            echo ''
-            bash '$full_path'
-            _rc=\$?
-            echo ''
-            echo -e '\033[1;34m──────────────────────────────────────────────────────────\033[0m'
-            if [[ \$_rc -eq 0 ]]; then
-                echo -e '\033[1;32m✓ Completed successfully!\033[0m'
-            else
-                echo -e '\033[1;33m⚠ Completed with exit code: \$_rc\033[0m'
-            fi
-            echo -e '\033[0;36mPress Enter to close this panel...\033[0m'
-            read
-        "
+    if [[ -n "$TMUX" && -n "$FPI_OUTPUT_PANE" ]]; then
+        local signal="fpi_run_$$_${RANDOM}"
+        # Move focus to the output pane FIRST so any prompt the script emits
+        # (sudo password, y/N confirmations) reads keystrokes from the right
+        # pane where the prompt is actually visible.
+        tmux select-pane -t "$FPI_OUTPUT_PANE"
+        tmux respawn-pane -k -t "$FPI_OUTPUT_PANE" \
+            "bash '${SCRIPT_DIR}lib/output_pane.sh' run '${full_path}' '${window_title}' '${signal}'"
+        # While the run is in flight the menu can't accept input, so paint a
+        # "Running…" placeholder that explains what's happening.
+        show_running_state "$window_title"
+        tmux wait-for "$signal"
+        tmux select-pane -t "${FPI_MENU_PANE:-:.0}"
     else
         # Fallback when tmux is unavailable: run inline (original behaviour).
         clear
@@ -170,7 +196,7 @@ show_menu() {
     done
     
     echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
-    echo -e "${INFO}Use ↑↓ arrows to navigate, Enter to select${NC}"
+    echo -e "${INFO}↑↓ navigate  •  Enter select  •  Alt+←/→ switch panes${NC}"
 }
 
 # Read single character input for arrow key navigation
@@ -234,6 +260,11 @@ main_loop() {
                     5) run_script scripts/nvidia_drivers.sh          "Nvidia Driver Installation" ;;
                     6)
                         echo -e "\n${DANGER}Exiting. Enjoy your new Fedora setup!${NC}"
+                        # Tear down the persistent right pane and our dedicated
+                        # tmux server so nothing lingers after the user quits.
+                        if [[ -n "$TMUX" ]]; then
+                            exec tmux kill-server
+                        fi
                         exit 0
                         ;;
                 esac
