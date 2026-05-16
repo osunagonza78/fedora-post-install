@@ -11,9 +11,14 @@
 # Version: 1.0
 ###############################################################################
 
+set -Eeuo pipefail
+
 # Source logging library
 SCRIPT_DIR="$(dirname "$0")"
 source "${SCRIPT_DIR}/../lib/logging.sh"
+source "${SCRIPT_DIR}/../lib/verify.sh"
+source "${SCRIPT_DIR}/../lib/runtime.sh"
+require_fedora
 
 ###############################################################################
 # Functions
@@ -24,29 +29,26 @@ source "${SCRIPT_DIR}/../lib/logging.sh"
 # Enables the system to run virtual machines and containers
 #
 # @details This function:
+#   - Checks CPU virtualisation support before proceeding
 #   - Installs virtualization package group (KVM, QEMU, libvirt)
-#   - Starts and enables libvirt daemon service
+#   - Enables and starts libvirt daemon service
 #   - Configures virtualization for immediate use
 #
 # @return 0 if virtualization stack is set up successfully
 # @return 1 if virtualization setup fails
 setup_virtualization_stack() {
-  log_info "Installing virtualization package group (@virtualization)..."
+  if ! check_cpu_virtualization; then
+    return 1
+  fi
 
-  # Install virtualization package group
+  log_info "Installing virtualization package group (@virtualization)..."
   if ! sudo dnf -y install @virtualization; then
     log_error "Failed to install virtualization packages"
     return 1
   fi
 
-  log_info "Starting libvirt daemon service..."
-  if ! sudo systemctl start libvirtd; then
-    log_error "Failed to start libvirtd service"
-    return 1
-  fi
-
-  log_info "Enabling libvirt service to start on boot..."
-  if ! sudo systemctl enable libvirtd --now; then
+  log_info "Enabling and starting libvirt daemon..."
+  if ! sudo systemctl enable --now libvirtd; then
     log_error "Failed to enable libvirtd service"
     return 1
   fi
@@ -76,7 +78,10 @@ main() {
     log_info "This will install KVM/QEMU hypervisor and configure libvirt services"
 
     # Install and configure virtualization stack for VM support
-    setup_virtualization_stack
+    if ! setup_virtualization_stack; then
+        log_error "Virtualization stack installation failed"
+        exit 1
+    fi
 
     log_success "Virtualization stack installation completed successfully!"
     log_info "You can now create and manage virtual machines using virt-manager or virsh."

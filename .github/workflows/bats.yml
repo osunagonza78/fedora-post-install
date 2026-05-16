@@ -1,0 +1,27 @@
+name: bats
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # Run inside real Fedora images so the dry-run smoke tests exercise the
+    # actual dnf the scripts target. The matrix catches DNF syntax drift
+    # across releases (require_fedora's floor is Fedora 41).
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ['41', 'latest']
+    container: fedora:${{ matrix.fedora }}
+    steps:
+      # Installed before checkout so actions/checkout has git available.
+      - name: Install test dependencies
+        run: dnf -y install bats git findutils pciutils
+
+      - uses: actions/checkout@v4
+
+      - name: Run bats smoke tests
+        run: bats --print-output-on-failure tests/

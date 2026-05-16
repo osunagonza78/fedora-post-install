@@ -9,14 +9,30 @@
 # Version: 1.0
 ###############################################################################
 
+set -Eeuo pipefail
+
 # Source logging and package utilities libraries
 SCRIPT_DIR="$(dirname "$0")"
 
 source "${SCRIPT_DIR}/../lib/logging.sh"
+source "${SCRIPT_DIR}/../lib/verify.sh"
+source "${SCRIPT_DIR}/../lib/runtime.sh"
+source "${SCRIPT_DIR}/../lib/shellrc.sh"
+require_fedora
+source "${SCRIPT_DIR}/../lib/versions.sh"
 source "${SCRIPT_DIR}/../lib/package_utils.sh"
+
+# Optional per-user overrides — see config/profile.env.example. Toggles like
+# ENABLE_BRAVE_BROWSER, ENABLE_WINE, OMP_THEME live there.
+if [[ -f "${SCRIPT_DIR}/../config/profile.env" ]]; then
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/../config/profile.env"
+fi
 
 
 # Global variables
+# ROCm packages live in install_amd_rocm_stack instead — they're a ~1 GB
+# pull and only useful when an AMD GPU is present.
 PROGRAMS_TO_INSTALL_DNF=(
   p7zip
   p7zip-plugins
@@ -42,10 +58,6 @@ PROGRAMS_TO_INSTALL_DNF=(
   fuse
   deja-dup
   dnf-plugins-core
-  rocminfo
-  rocm-opencl
-  rocm-clinfo
-  rocm-hip
   gparted
   libxcrypt-compat
   libfreeaptx
@@ -104,8 +116,11 @@ update_system_firmware() {
 setup_flatpak_environment() {
   log_info "Performing flatpak setup..."
 
-  # Add Flathub repository if not already present
-  if ! flatpak remote-list | grep -q "flathub"; then
+  # Add Flathub repository if not already present. Capture remote-list first:
+  # `flatpak remote-list | grep -q` can SIGPIPE flatpak under `set -o pipefail`.
+  local flatpak_remotes
+  flatpak_remotes=$(flatpak remote-list 2>/dev/null) || true
+  if ! grep -q "flathub" <<<"$flatpak_remotes"; then
     log_info "Installing Flathub repository..."
     if ! flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo; then
       log_error "Failed to add Flathub repository"
@@ -210,6 +225,10 @@ configure_firefox_codecs() {
 # @return 0 if Microsoft fonts are installed successfully
 # @return 1 if font installation fails
 install_microsoft_fonts() {
+  if [[ "${ENABLE_MS_FONTS:-1}" != "1" ]]; then
+    log_info "Microsoft fonts disabled by profile.env — skipping"
+    return 0
+  fi
   log_info "Performing fonts setup..."
 
   # Install font management dependencies
@@ -218,11 +237,30 @@ install_microsoft_fonts() {
     return 1
   fi
 
-  # Install Microsoft Core Fonts package
-  if ! sudo rpm -i https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm; then
-    log_error "Failed to install Microsoft fonts"
+  # Download Microsoft Core Fonts installer with curl to a tempfile, install
+  # the local RPM with dnf, then remove the downloaded file.
+  # dnf install (vs. rpm -i) is idempotent and resolves dependencies, where
+  # rpm -i errors on the second run.
+  local ms_fonts_url="https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm"
+  local ms_fonts_rpm
+  if ! ms_fonts_rpm=$(mktemp -t msttcore-fonts-installer.XXXXXX.rpm); then
+    log_error "Failed to create tempfile for Microsoft fonts installer"
     return 1
   fi
+
+  if ! curl -fsSL -o "$ms_fonts_rpm" "$ms_fonts_url"; then
+    log_error "Failed to download Microsoft fonts installer"
+    rm -f "$ms_fonts_rpm"
+    return 1
+  fi
+
+  if ! sudo dnf install -y "$ms_fonts_rpm"; then
+    log_error "Failed to install Microsoft fonts"
+    rm -f "$ms_fonts_rpm"
+    return 1
+  fi
+
+  rm -f "$ms_fonts_rpm"
 
   # Update system font cache to recognize new fonts
   if ! sudo fc-cache -fv; then
@@ -239,6 +277,10 @@ install_microsoft_fonts() {
 # @return 0 if Brave Browser is installed successfully
 # @return 1 if Brave Browser installation fails
 install_brave_browser() {
+  if [[ "${ENABLE_BRAVE_BROWSER:-1}" != "1" ]]; then
+    log_info "Brave Browser disabled by profile.env — skipping"
+    return 0
+  fi
   log_info "Performing brave browser installation..."
   
   # Install required DNF plugins for repository management
@@ -269,21 +311,36 @@ install_brave_browser() {
 # @return 0 if Wine is installed successfully
 # @return 1 if Wine installation fails
 install_wine() {
+  if [[ "${ENABLE_WINE:-1}" != "1" ]]; then
+    log_info "Wine disabled by profile.env — skipping"
+    return 0
+  fi
   log_info "Performing wine installation..."
 
-  # Add WineHQ official repository for Fedora
-  if ! sudo dnf config-manager addrepo --from-repofile=https://dl.winehq.org/wine-builds/fedora/43/winehq.repo; then
-    log_error "Failed to add Wine repository"
-    return 1
+  # WineHQ doesn't always publish a repo for the newest Fedora release the
+  # day it ships. Probe the URL with wget --spider before adding the repo;
+  # on a 404, fall back to the Fedora-shipped `wine` package so the user
+  # still gets a working Wine.
+  log_info "Probing WineHQ repository for Fedora ${FEDORA_VERSION}..."
+  if wget -q --spider --tries=1 --timeout=10 "$WINE_REPO_URL"; then
+    log_info "Adding WineHQ repository..."
+    if ! sudo dnf config-manager addrepo --from-repofile="${WINE_REPO_URL}"; then
+      log_error "Failed to add Wine repository"
+      return 1
+    fi
+    if ! sudo dnf install -y winehq-stable; then
+      log_error "Failed to install WineHQ"
+      return 1
+    fi
+    log_success "WineHQ installed"
+  else
+    log_warning "WineHQ repo not available for Fedora ${FEDORA_VERSION} — falling back to Fedora-shipped wine"
+    if ! sudo dnf install -y wine; then
+      log_error "Failed to install Fedora wine"
+      return 1
+    fi
+    log_success "Wine (Fedora package) installed"
   fi
-
-  # Install Wine stable release
-  if ! sudo dnf install -y winehq-stable; then
-    log_error "Failed to install Wine"
-    return 1
-  fi
-  
-  log_success "Wine installed"
 }
 
 # Function to set up Oh My Posh shell prompt
@@ -299,126 +356,156 @@ install_wine() {
 # @return 0 if Oh My Posh is set up successfully
 # @return 1 if Oh My Posh setup fails
 setup_oh_my_posh_shell() {
+  if [[ "${ENABLE_OMP:-1}" != "1" ]]; then
+    log_info "Oh My Posh disabled by profile.env — skipping"
+    return 0
+  fi
   log_info "Performing Oh My Posh installation..."
   local posh_bin="/usr/local/bin/oh-my-posh"
   local fonts_dir="$HOME/.local/share/fonts"
   local themes_dir="$HOME/.poshthemes"
   local downloads_dir="$HOME/Downloads"
-  
-  # Download Oh My Posh binary
-  if ! sudo wget https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-linux-amd64 -O "$posh_bin"; then
-    log_error "Failed to download Oh My Posh"
-    return 1
-  fi
-  
-  # Make Oh My Posh binary executable
-  if ! sudo chmod +x "$posh_bin"; then
-    log_error "Failed to make Oh My Posh executable"
-    return 1
-  fi
-  
-  # Create fonts directory for FiraCode
-  if ! mkdir -p "$fonts_dir"; then
-    log_error "Failed to create fonts directory"
-    return 1
-  fi
-  
-  # Download FiraCode Nerd Font
-  if ! wget https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/FiraCode.zip -O "$downloads_dir/firacode.zip"; then
-    log_error "Failed to download FiraCode font"
-    return 1
-  fi
-  
-  # Extract FiraCode font to fonts directory
-  if ! unzip "$downloads_dir/firacode.zip" -d "$fonts_dir"; then
-    log_error "Failed to extract FiraCode font"
-    return 1
+
+  mkdir -p "$downloads_dir"
+
+  # --- Oh My Posh binary ---
+  # Download as the user to a tempfile, verify SHA-256 against the vendor's
+  # sibling checksum, then `install -m 0755` into /usr/local/bin. Avoids
+  # running wget's TLS/HTTP stack as root.
+  if [[ -x "$posh_bin" ]]; then
+    log_info "Oh My Posh binary already present at $posh_bin — skipping"
+  else
+    local tmp_posh
+    if ! tmp_posh=$(mktemp -t oh-my-posh.XXXXXX); then
+      log_error "Failed to create tempfile for Oh My Posh"
+      return 1
+    fi
+    log_info "Downloading Oh My Posh binary..."
+    if ! wget -qO "$tmp_posh" "$OMP_BIN_URL"; then
+      log_error "Failed to download Oh My Posh"
+      rm -f "$tmp_posh"
+      return 1
+    fi
+    if ! verify_checksum_from_url "$tmp_posh" "$OMP_BIN_SHA256_URL"; then
+      log_error "Oh My Posh checksum verification failed"
+      rm -f "$tmp_posh"
+      return 1
+    fi
+    if ! sudo install -m 0755 "$tmp_posh" "$posh_bin"; then
+      log_error "Failed to install Oh My Posh binary"
+      rm -f "$tmp_posh"
+      return 1
+    fi
+    rm -f "$tmp_posh"
   fi
 
-  # Update system font cache
-  if ! fc-cache -f -v; then
-    log_warning "Failed to update font cache"
+  # --- FiraCode Nerd Font ---
+  if [[ "${ENABLE_FIRACODE:-1}" != "1" ]]; then
+    log_info "FiraCode disabled by profile.env — skipping"
+  elif compgen -G "$fonts_dir/FiraCode*" > /dev/null; then
+    log_info "FiraCode Nerd Font already installed in $fonts_dir — skipping"
+  else
+    if ! mkdir -p "$fonts_dir"; then
+      log_error "Failed to create fonts directory"
+      return 1
+    fi
+    log_info "Downloading FiraCode Nerd Font..."
+    if ! wget -O "$downloads_dir/firacode.zip" "$FIRACODE_URL"; then
+      log_error "Failed to download FiraCode font"
+      return 1
+    fi
+    if ! verify_checksum_from_url "$downloads_dir/firacode.zip" "$FIRACODE_SHA256_URL" "FiraCode.zip"; then
+      log_error "FiraCode checksum verification failed"
+      return 1
+    fi
+    if ! unzip -o "$downloads_dir/firacode.zip" -d "$fonts_dir"; then
+      log_error "Failed to extract FiraCode font"
+      return 1
+    fi
+    rm -f "$downloads_dir/firacode.zip"
+    if ! fc-cache -f -v; then
+      log_warning "Failed to update font cache"
+    fi
   fi
 
-  # Create themes directory
-  if ! mkdir -p "$themes_dir"; then
-    log_error "Failed to create themes directory"
-    return 1
+  # --- Oh My Posh themes ---
+  if compgen -G "$themes_dir/*.omp.json" > /dev/null; then
+    log_info "Oh My Posh themes already installed in $themes_dir — skipping"
+  else
+    if ! mkdir -p "$themes_dir"; then
+      log_error "Failed to create themes directory"
+      return 1
+    fi
+    log_info "Downloading Oh My Posh themes..."
+    if ! wget -O "$themes_dir/themes.zip" "$OMP_THEMES_URL"; then
+      log_error "Failed to download Oh My Posh themes"
+      return 1
+    fi
+    if ! verify_checksum_from_url "$themes_dir/themes.zip" "$OMP_THEMES_SHA256_URL"; then
+      log_error "Oh My Posh themes checksum verification failed"
+      return 1
+    fi
+    if ! unzip -o "$themes_dir/themes.zip" -d "$themes_dir"; then
+      log_error "Failed to extract Oh My Posh themes"
+      return 1
+    fi
+    if compgen -G "$themes_dir/*.json" > /dev/null; then
+      chmod u+rw "$themes_dir"/*.json || log_warning "Failed to set permissions on theme files"
+    fi
+    rm -f "$themes_dir/themes.zip"
   fi
-  
-  # Download Oh My Posh themes
-  if ! wget https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/themes.zip -O "$themes_dir/themes.zip"; then
-    log_error "Failed to download Oh My Posh themes"
-    return 1
-  fi
-  
-  # Extract themes to themes directory
-  if ! unzip "$themes_dir/themes.zip" -d "$themes_dir"; then
-    log_error "Failed to extract Oh My Posh themes"
-    return 1
-  fi
-  
-  # Set proper permissions on theme files
-  if ! chmod u+rw "$themes_dir"/*.json; then
-    log_warning "Failed to set permissions on theme files"
-  fi
-  
-  # Clean up themes zip file
-  if ! rm "$themes_dir/themes.zip"; then
-    log_warning "Failed to clean up themes zip file"
-  fi
-  
+
   log_success "Oh My Posh shell setup completed"
 }
 
-# Function to configure shell environment
-# Configures .bashrc to include fastfetch and Oh My Posh prompt
-# Creates backup of existing .bashrc before making changes
-#
-# @details This function:
-#   - Checks if configuration already exists to avoid duplication
-#   - Creates timestamped backup of .bashrc
-#   - Adds fastfetch command for system info display
-#   - Adds Oh My Posh initialization with jandedobbeleer theme
-#
-# @return 0 if shell environment is configured successfully
-# @return 1 if shell configuration fails
-configure_shell_environment() {
-  local bashrc_path="$HOME/.bashrc"
-  local config_block="\n# fastfetch and poshtheme\n"
-  local fastfetch_line="fastfetch\n"
-  local poshtheme_line="eval \"\$(oh-my-posh init bash --config ~/.poshthemes/jandedobbeleer.omp.json)\""
+# Install the AMD ROCm compute stack, but only on machines that actually
+# have an AMD GPU/APU. The ROCm packages are ~1 GB and useless on Intel/NVIDIA
+# hosts — see lspci-gated NVIDIA install in nvidia_drivers.sh:check_nvidia_gpu.
+install_amd_rocm_stack() {
+  log_info "Checking for AMD device before installing ROCm..."
 
-  # Check if configuration already exists in .bashrc
-  if grep -q "fastfetch and poshtheme" "$bashrc_path" 2>/dev/null; then
-    log_info "Shell configuration already exists in .bashrc"
+  if ! command -v lspci &>/dev/null; then
+    log_info "Installing pciutils (provides lspci)..."
+    if ! sudo dnf -y install pciutils &>/dev/null; then
+      log_warning "Failed to install pciutils — skipping ROCm"
+      return 0
+    fi
+  fi
+
+  # Capture lspci once — `lspci | grep -iq` SIGPIPEs lspci under pipefail when
+  # a match is found, wrongly skipping ROCm exactly when an AMD GPU is present.
+  local pci_devices
+  pci_devices=$(lspci 2>/dev/null) || true
+
+  if ! grep -iq amd <<<"$pci_devices"; then
+    log_info "No AMD device detected — skipping ROCm install"
     return 0
   fi
 
-  # Create backup of existing .bashrc with timestamp
-  if ! cp "$bashrc_path" "${bashrc_path}.backup.$(date +%Y%m%d_%H%M%S)"; then
-    log_warning "Failed to backup .bashrc"
+  log_info "AMD device detected — installing ROCm stack..."
+  install_packages rocminfo rocm-opencl rocm-clinfo rocm-hip
+}
+
+# Configure the user's shell rc file to invoke fastfetch and load Oh My Posh.
+# Idempotent + multi-shell via lib/shellrc.sh:append_if_missing. Gated by the
+# ENABLE_SHELL_PROMPT toggle in config/profile.env.
+configure_shell_environment() {
+  if [[ "${ENABLE_SHELL_PROMPT:-1}" != "1" ]]; then
+    log_info "Shell prompt customisation disabled by profile.env — skipping"
+    return 0
   fi
 
-  # Add configuration section header
-  if ! echo -e "$config_block" >> "$bashrc_path"; then
-    log_error "Failed to add configuration block to .bashrc"
-    return 1
-  fi
-  
-  # Add fastfetch command for system information display
-  if ! echo -e "$fastfetch_line" >> "$bashrc_path"; then
-    log_error "Failed to add fastfetch line to .bashrc"
-    return 1
-  fi
-  
-  # Add Oh My Posh initialization command
-  if ! echo -e "$poshtheme_line" >> "$bashrc_path"; then
-    log_error "Failed to add Oh My Posh line to .bashrc"
-    return 1
-  fi
-  
-  log_success "Shell environment configured successfully"
+  local theme="${OMP_THEME:-jandedobbeleer}"
+  local marker="# fpi: fastfetch and Oh My Posh"
+  local bash_block fish_block
+
+  bash_block="fastfetch
+eval \"\$(oh-my-posh init bash --config ~/.poshthemes/${theme}.omp.json)\""
+
+  fish_block="fastfetch
+oh-my-posh init fish --config ~/.poshthemes/${theme}.omp.json | source"
+
+  append_if_missing "$marker" "$bash_block" "$fish_block"
 }
 
 # =============================================================================
@@ -449,37 +536,29 @@ configure_shell_environment() {
 # @return 1 if any critical operation fails
 main() {
     log_info "Starting comprehensive package installation..."
-    
-    # Perform firmware updates for hardware compatibility
-    update_system_firmware
 
-    # Configure Flatpak for sandboxed applications
-    setup_flatpak_environment
+    # Each step is allowed to fail without aborting the rest, but we
+    # aggregate the failure count and exit non-zero at the end so the
+    # caller (and the menu's "✓ Completed" message) reflects reality.
+    local failures=0
 
-    # Install multimedia codecs for comprehensive media support
-    install_multimedia_codecs
+    update_system_firmware                          || failures=$((failures + 1))
+    setup_flatpak_environment                       || failures=$((failures + 1))
+    install_multimedia_codecs                       || failures=$((failures + 1))
+    configure_firefox_codecs                        || failures=$((failures + 1))
+    install_packages "${PROGRAMS_TO_INSTALL_DNF[@]}" || failures=$((failures + 1))
+    install_amd_rocm_stack                          || failures=$((failures + 1))
+    install_microsoft_fonts                         || failures=$((failures + 1))
+    setup_oh_my_posh_shell                          || failures=$((failures + 1))
+    install_brave_browser                           || failures=$((failures + 1))
+    install_wine                                    || failures=$((failures + 1))
+    configure_shell_environment                     || failures=$((failures + 1))
 
-    # Configure Firefox video codecs for web video playback
-    configure_firefox_codecs
+    if [[ $failures -gt 0 ]]; then
+        log_error "Package installation finished with $failures failed step(s) — review the log above."
+        exit 1
+    fi
 
-    # Install essential system packages and utilities
-    install_packages "${PROGRAMS_TO_INSTALL_DNF[@]}"
-
-    # Install Microsoft fonts for better web compatibility
-    install_microsoft_fonts
-
-    # Install Oh My Posh for enhanced shell experience
-    setup_oh_my_posh_shell
-
-    # Install Brave Browser for privacy-focused browsing
-    install_brave_browser
-
-    # Install Wine for Windows application compatibility
-    install_wine
-
-    # Configure shell environment with customizations
-    configure_shell_environment
-    
     log_success "Package installation completed successfully!"
     log_info "Please restart your terminal or run 'source ~/.bashrc' to apply shell changes."
 }

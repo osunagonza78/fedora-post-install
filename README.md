@@ -20,7 +20,7 @@ Note: This is a personal project tailored to my specific use case. It is publish
 
 ## 📋 Prerequisites
 
-- **OS**: Latest Fedora
+- **OS**: Fedora 41 or newer (DNF5 is required)
 - **Permissions**: Root/sudo access
 - **Network**: Active internet connection
 - **Storage**: ~2GB free space for packages and drivers
@@ -39,51 +39,79 @@ chmod +x run.sh
 
 ## 📖 Usage Guide
 
-The script provides an interactive menu-driven interface with enhanced output display:
+`run.sh` launches a tmux split-pane menu on its own dedicated socket. The
+menu lives in the left pane; output streams in the right pane. A green ✓
+appears next to any entry already completed in this state directory.
 
 ```
-┌─────────────────────────────────────────────────┐
-│           Fedora Post-Install Tool              │
-├─────────────────────────────────────────────────┤
-│ 1. System Configuration                         │
-│    Optimize DNF, set hostname, and tune limits  │
-│                                                 │
-│ 2. Packages Installation                        │
-│    Enable RPM Fusion, Flatpak, and apps         │
-│                                                 │
-│ 3. Development Environment Installation         │
-│    Install Development Tools                    │
-│                                                 │
-│ 4. Virtualization Stack                         │
-│    Install KVM/QEMU hypervisor and libvirt      │
-│                                                 │
-│ 5. Secure Boot Config                           │
-│    Generate and enroll MOK keys                 │
-│                                                 │
-│ 6. NVIDIA Drivers                               │
-│    Install latest proprietary drivers           │
-│                                                 │
-│ 7. Exit                                         │
-└─────────────────────────────────────────────────┘
+╭──────────────────────────────────────────────────────────╮
+│             FEDORA POST-INSTALL TOOL                     │
+╰──────────────────────────────────────────────────────────╯
+
+  1) ✓ System Configuration
+       Optimize DNF, set hostname, and tune system limits.
+
+  2)   Packages Installation
+       Enable RPM Fusion, Flatpak, and install essential apps.
+
+  3)   Development Environment Installation
+       Install Development Tools.
+
+  4)   Virtualization Stack
+       Install KVM/QEMU hypervisor and libvirt services.
+
+  5)   Secure Boot Config
+       Generate and enroll MOK keys for 3rd party modules.
+
+  6)   Nvidia Drivers
+       Install latest proprietary drivers via Akmod.
+
+  7)   Run Recommended Baseline
+       System Configuration + Packages Installation back-to-back.
+
+  8)   Exit
+
+──────────────────────────────────────────────────────────
+↑↓/jk navigate  •  1-9 jump  •  Enter select  •  q quit
+Alt+←/→ switch panes  •  Ctrl+b [ scrollback
 ```
 
-### Enhanced Interface Features
+### CLI flags
 
-- **Command Preview**: Shows the exact command that will be executed
-- **Real-time Output**: Displays live command output with full interactive control
-- **Progress Tracking**: Clear status indicators and completion messages
-- **Clean Navigation**: Arrow key navigation with visual feedback
-- **Error Handling**: Detailed error messages and exit codes
+```
+./run.sh                       Interactive menu (default)
+./run.sh --list                Print available script keys and exit
+./run.sh --run KEY             Run one script non-interactively (no tmux)
+./run.sh --run all             Run the recommended baseline
+./run.sh --dry-run [--run KEY] Print every privileged call as `DRY:` and skip
+./run.sh --help                Show usage
+```
 
-### Menu Options
+The non-interactive path is what to use from Ansible / Vagrant / Packer.
 
-1. **System Configuration** - Optimize DNF, set hostname, tune system limits
-2. **Packages Installation** - Install essential software, multimedia codecs, and development tools
-3. **Development Environment** - Install development tools and container support
-4. **Virtualization Stack** - Install KVM/QEMU hypervisor and configure libvirt services for VM support
-5. **Secure Boot Config** - Configure MOK keys for third-party kernel modules
-6. **NVIDIA Drivers** - Install and configure proprietary NVIDIA drivers
-7. **Exit** - Close the application
+### State and logs
+
+- Per-pane output is tee'd to `${XDG_STATE_HOME:-~/.local/state}/fpi/logs/<key>-<timestamp>.log`.
+- Completed scripts are recorded in `~/.local/state/fpi/done` so the menu ✓ marker survives a reboot.
+
+### Personal preferences
+
+Defaults assume an opinionated workstation (Brave, Wine, Oh My Posh +
+fastfetch, FiraCode, JetBrains IDEs, VS Code). Copy
+`config/profile.env.example` to `config/profile.env` and flip any
+`ENABLE_*` toggle to `0` to skip its install. `OMP_THEME` picks which Oh
+My Posh theme is wired into the shellrc.
+
+### Multi-shell support
+
+The shellrc init blocks (Java/Gradle exports, fastfetch + Oh My Posh
+init) are written to whichever rc file matches `$SHELL`:
+
+| Shell | File                                  |
+|-------|---------------------------------------|
+| bash  | `~/.bashrc`                           |
+| zsh   | `~/.zshrc`                            |
+| fish  | `~/.config/fish/config.fish` (fish syntax) |
 
 ## ⚠️ Important Notes
 
@@ -98,18 +126,30 @@ The script provides an interactive menu-driven interface with enhanced output di
 
 ```
 fedora-post-install/
-├── run.sh                           # Main interactive launcher
-├── scripts/                         # Individual installation scripts
-│   ├── system_configuration.sh      # System optimizations and tuning
-│   ├── packages_installation.sh    # Essential packages and codecs
-│   ├── development_installation.sh  # Development tools and Docker
-│   ├── virtualization_installation.sh # KVM/QEMU and libvirt setup
-│   ├── configure_secureboot.sh      # MOK key management
-│   └── nvidia_drivers.sh            # NVIDIA driver installation
-├── lib/                             # Shared libraries
-│   └── logging.sh                   # Common logging functions
-├── README.md                        # This documentation
-└── LICENSE                          # GPL v3.0 License
+├── run.sh                              # Interactive launcher + CLI entry
+├── scripts/                            # Individual installation scripts
+│   ├── system_configuration.sh
+│   ├── packages_installation.sh
+│   ├── development_installation.sh
+│   ├── virtualization_installation.sh
+│   ├── configure_secureboot.sh
+│   └── nvidia_drivers.sh
+├── lib/                                # Shared libraries
+│   ├── ui.sh                           # Colour palette + style codes
+│   ├── logging.sh                      # log_info/warning/error/success
+│   ├── verify.sh                       # require_fedora, confirm_reboot, checksum helpers
+│   ├── runtime.sh                      # State paths, dry-run sudo override, mark_done
+│   ├── shellrc.sh                      # detect_shell_rc, append_if_missing
+│   ├── output_pane.sh                  # Right-pane runner (tees to log)
+│   ├── package_utils.sh                # install_packages helper
+│   └── versions.sh                     # Pinned URLs + SHA-256 sibling refs
+├── config/
+│   └── profile.env.example             # Copy to profile.env to override defaults
+├── .github/workflows/
+│   └── shellcheck.yml                  # lint on every PR
+├── IMPROVEMENTS.md                     # Reliability/usability backlog
+├── README.md                           # This documentation
+└── LICENSE                             # GPL v3.0
 ```
 
 ## 🔧 Technical Details
@@ -126,10 +166,31 @@ The tool features a custom output display system that:
 ### Script Organization
 
 Each installation script is modular and independent:
-- Comprehensive logging with color-coded output
-- Error handling and rollback capabilities
-- Dependency checking and validation
-- Progress indicators and status updates
+- Comprehensive logging with colour-coded output
+- Idempotent: re-running skips work already done
+- Checksum verification on every download with a vendor-published `.sha256`
+- Dry-run support: every privileged call is gated through a single `sudo`
+  wrapper that respects `FPI_DRY_RUN`
+
+> Note: there is **no rollback support** — changes the scripts make to
+> `/etc/dnf/dnf.conf`, `/etc/environment`, etc. are persistent. Snapshot
+> the host (Timeshift, BTRFS snapshots, LVM) before running on systems
+> that need an undo path.
+
+### Updating pinned versions
+
+`lib/versions.sh` pins JetBrains IDE, Gradle, OpenJDK, and FiraCode
+versions. When a JetBrains release rotates out of the download server,
+update the corresponding `*_VERSION` variable and run `--dry-run --run
+development_installation` to confirm the new URL resolves.
+
+| Variable          | Where to find the latest                                                   |
+|-------------------|-----------------------------------------------------------------------------|
+| `IDEA_VERSION`    | https://www.jetbrains.com/idea/download/other.html                          |
+| `PYCHARM_VERSION` | https://www.jetbrains.com/pycharm/download/other.html                       |
+| `GRADLE_VERSION`  | https://gradle.org/releases/                                                |
+| `OPENJDK_*`       | https://jdk.java.net/                                                       |
+| `FIRACODE_VERSION`| https://github.com/ryanoasis/nerd-fonts/releases                            |
 
 ## 🤝 Contributing
 

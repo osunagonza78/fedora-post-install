@@ -10,10 +10,22 @@
 # Version: 1.0
 ###############################################################################
 
+set -Eeuo pipefail
+
 # Source logging library
 SCRIPT_DIR="$(dirname "$0")"
 source "${SCRIPT_DIR}/../lib/logging.sh"
+source "${SCRIPT_DIR}/../lib/verify.sh"
+source "${SCRIPT_DIR}/../lib/runtime.sh"
+require_fedora
 source "${SCRIPT_DIR}/../lib/package_utils.sh"
+
+###############################################################################
+# Variables
+###############################################################################
+
+changes_made=0
+errors=0
 
 ###############################################################################
 # Constants
@@ -41,12 +53,14 @@ declare -A configs=(
 dnf_config_exists() {
   log_info "Checking if DNF configuration file exists..."
 
-  # Check if the DNF configuration file is present at the specified location
+  # Pure predicate: report whether the file is present and let the caller
+  # decide what to do — see main(). Avoids a surprising exit from inside a
+  # callable helper.
   if [[ ! -f "$DNF_CONF" ]]; then
-    # If the file does not exist, print an error message and exit with a non-zero status code
     log_error "DNF configuration file not found at $DNF_CONF"
-    exit 1
+    return 1
   fi
+  return 0
 }
 
 # Function to add or update configuration
@@ -65,7 +79,10 @@ dnf_config_update() {
     if grep -q "^${key}=" "$DNF_CONF"; then
         # Update existing setting
         log_info "Updating existing setting: ${key}=${value}"
-        if ! sudo sed -i "s/^${key}=.*/${key}=${value}/" "$DNF_CONF"; then
+        local escaped_key
+        # shellcheck disable=SC2016  # single quotes intentional: literal sed regex
+        escaped_key=$(printf '%s' "$key" | sed 's/[[\.*^$()+?{|]/\\&/g')
+        if ! sudo sed -i "s/^${escaped_key}=.*/${key}=${value}/" "$DNF_CONF"; then
             log_error "Failed to update setting: ${key}"
             return 1
         fi
@@ -98,65 +115,104 @@ dnf_config_backup() {
 
   # Add/Update DNF optimizations
   for key in "${!configs[@]}"; do
-    dnf_config_update "$key" "${configs[$key]}" && ((changes_made++)) || ((errors++))
+    # Plain assignments (not `((x++))`): a bare arithmetic command returns 1
+    # when the pre-increment value is 0, which trips `set -e` on the first
+    # setting. `var=$((var + 1))` always returns 0.
+    if dnf_config_update "$key" "${configs[$key]}"; then
+      changes_made=$((changes_made + 1))
+    else
+      errors=$((errors + 1))
+    fi
   done
+
+  log_info "DNF configuration: $changes_made settings applied, $errors errors"
 }
 
 # Function to install RPM Fusion
+# Skips a side individually when its release RPM is already installed — re-runs
+# of System Configuration no longer reinstall the repos.
 install_rpm_fusion() {
   log_info "Installing RPM Fusion..."
 
-  # Get the free repository (most stuff you need)
-  sudo dnf install -y \
-    https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+  local fedora_release
+  fedora_release=$(rpm -E %fedora)
 
-  # Get the nonfree repository (NVIDIA drivers, some codecs)
-  sudo dnf install -y \
-    https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+  if rpm -q rpmfusion-free-release &>/dev/null; then
+    log_info "rpmfusion-free-release already installed — skipping"
+  else
+    log_info "Installing rpmfusion-free-release..."
+    if ! sudo dnf install -y \
+      "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${fedora_release}.noarch.rpm"; then
+      log_error "Failed to install rpmfusion-free-release"
+      return 1
+    fi
+  fi
+
+  if rpm -q rpmfusion-nonfree-release &>/dev/null; then
+    log_info "rpmfusion-nonfree-release already installed — skipping"
+  else
+    log_info "Installing rpmfusion-nonfree-release..."
+    if ! sudo dnf install -y \
+      "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fedora_release}.noarch.rpm"; then
+      log_error "Failed to install rpmfusion-nonfree-release"
+      return 1
+    fi
+  fi
 }
 
 # Function to perform updates and upgrades
 perform_updates() {
   log_info "Performing upgrade and cleanup..."
-  sleep 1
   sudo dnf group upgrade core -y
-  sudo dnf4 group install core -y
   sudo dnf -y update
 }
 
 # Function to perform optimizations
+# Returns non-zero only if a critical optimisation fails. Tolerates services
+# that are already disabled or not present on minimal Fedora spins.
 perform_optimizations() {
   log_info "Performing optimizations..."
 
-  sudo systemctl disable NetworkManager-wait-online.service
+  if systemctl list-unit-files NetworkManager-wait-online.service &>/dev/null; then
+    if ! sudo systemctl disable NetworkManager-wait-online.service; then
+      log_warning "Failed to disable NetworkManager-wait-online.service"
+      return 1
+    fi
+  else
+    log_info "NetworkManager-wait-online.service not present — skipping"
+  fi
 }
 
 ###############################################################################
 # Main script
 ###############################################################################
 
-# Check if wget is installed
-check_program_installed wget
+main() {
+  log_info "Starting system configuration..."
 
-# Check if the DNF config file exists
-dnf_config_exists
+  # Preflight steps that must succeed before anything else is meaningful.
+  # dnf_config_exists is a pure predicate — main decides that a missing
+  # dnf.conf is fatal here. check_program_installed / dnf_config_backup
+  # still abort on hard failure themselves.
+  check_program_installed wget
+  if ! dnf_config_exists; then
+    log_error "Cannot continue without $DNF_CONF — aborting."
+    exit 1
+  fi
+  dnf_config_backup
 
-# Perform a DNF config file backup and update DNF config file
-dnf_config_backup
+  local failures=0
+  install_rpm_fusion     || failures=$((failures + 1))
+  perform_optimizations  || failures=$((failures + 1))
+  perform_updates        || failures=$((failures + 1))
 
-# Install RPM Fusion
-install_rpm_fusion
+  if [[ $failures -gt 0 ]]; then
+    log_error "System configuration finished with $failures failed step(s) — review the log above."
+    exit 1
+  fi
 
-# Perform optimizations
-perform_optimizations
+  confirm_reboot "System configuration complete. A reboot is recommended to apply all changes."
+}
 
-# Perform updates
-perform_updates
-
-# Summary of changes
-log_info "Sleeping 5 seconds before restart system."
-sleep 5
-
-# Reboot
-reboot
+main "$@"
 

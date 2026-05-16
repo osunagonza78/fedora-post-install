@@ -14,9 +14,14 @@
 # Version: 1.0
 # =============================================================================
 
+set -Eeuo pipefail
+
 # Source logging library
 SCRIPT_DIR="$(dirname "$0")"
 source "${SCRIPT_DIR}/../lib/logging.sh"
+source "${SCRIPT_DIR}/../lib/verify.sh"
+source "${SCRIPT_DIR}/../lib/runtime.sh"
+require_fedora
 
 # =============================================================================
 # SECURE BOOT FUNCTIONS
@@ -33,22 +38,29 @@ source "${SCRIPT_DIR}/../lib/logging.sh"
 # Note: After running this script, you will need to reboot and manually enroll
 # the MOK in the BIOS/UEFI firmware interface when prompted during boot.
 enable_secure_boot() {
+	# Skip if MOK certificate already exists (script already ran once)
+	if [ -f /etc/pki/akmods/certs/public_key.der ]; then
+		log_info "MOK certificate already exists at /etc/pki/akmods/certs/public_key.der"
+		log_info "Skipping key generation. Run 'sudo mokutil --list-enrolled' to inspect enrolled keys."
+		return 0
+	fi
+
 	log_info "Enabling Secure Boot..."
-	
+
 	# Install required packages
 	log_info "Installing required packages for Secure Boot..."
 	sudo dnf install -y kmodtool akmods mokutil openssl
-	check_command_status "Required packages installation" || return 1
+	check_command_status $? "Required packages installation" || return 1
 	
 	# Generate a CA key
 	log_info "Generating Certificate Authority key for kernel module signing..."
 	sudo kmodgenca -a
-	check_command_status "CA key generation" || return 1
+	check_command_status $? "CA key generation" || return 1
 	
 	# Copy the key to the certs folder and import into MOK database
 	log_info "Importing generated CA key into Machine Owner Key database..."
 	sudo mokutil --import /etc/pki/akmods/certs/public_key.der
-	check_command_status "MOK import" || return 1
+	check_command_status $? "MOK import" || return 1
 	
 	log_success "Secure Boot configuration completed successfully"
 }
@@ -92,31 +104,24 @@ display_secure_boot_instructions() {
 
 main() {
 	log_info "Starting Secure Boot configuration..."
-	
-	# Enable Secure Boot
-	enable_secure_boot
-	local secure_boot_status=$?
-	
-	# Display post-installation instructions
+
+	local secure_boot_status=0
+	enable_secure_boot || secure_boot_status=$?
+
+	# Show enrollment instructions regardless — the user may need them
+	# even on a partial failure to debug or retry manually.
 	display_secure_boot_instructions
-	
-	# Report overall status
-	if [ $secure_boot_status -eq 0 ]; then
-		log_success "Secure Boot configuration completed successfully!"
-		log_info "Please follow the enrollment instructions above after reboot."
-	else
+
+	if [[ $secure_boot_status -ne 0 ]]; then
 		log_error "Secure Boot configuration encountered errors."
 		log_error "Please check the messages above and resolve any issues."
 		exit 1
 	fi
-	
-	# Sleep before rebooting
-	log_info "Sleeping 5 seconds before system restart..."
-	sleep 5
-	
-	# Reboot to complete the process
-	log_info "Rebooting system to complete Secure Boot enrollment..."
-	reboot
+
+	log_success "Secure Boot configuration completed successfully!"
+	log_info "Please follow the enrollment instructions above after reboot."
+
+	confirm_reboot "Reboot required to complete Secure Boot MOK enrollment."
 }
 
 # Execute main function

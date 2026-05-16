@@ -13,13 +13,11 @@
 # Version: 1.0
 # =============================================================================
 
-# Color codes for output formatting
-RED='\e[1;91m'
-GREEN='\e[1;92m'
-BLUE='\e[1;94m'
-ORANGE='\e[1;93m'
-YELLOW='\e[1;33m'
-NO_COLOR='\e[0m'
+# Colour codes live in lib/ui.sh now — single source of truth across run.sh,
+# lib/logging.sh, and lib/output_pane.sh.
+LOGGING_SCRIPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./ui.sh
+source "${LOGGING_SCRIPT_LIB_DIR}/ui.sh"
 
 # =============================================================================
 # LOGGING FUNCTIONS
@@ -62,14 +60,16 @@ log_debug() {
 # =============================================================================
 
 # Check if command executed successfully
-# Usage: check_command_status "Description of command"
+# Usage: check_command_status $? "Description of command"
 # Returns: 0 if successful, 1 if failed
 check_command_status() {
-    if [ $? -eq 0 ]; then
-        log_info "$1 completed successfully"
+    local exit_code=$1
+    local description=$2
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "$description completed successfully"
         return 0
     else
-        log_error "$1 failed"
+        log_error "$description failed"
         return 1
     fi
 }
