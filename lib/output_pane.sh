@@ -19,16 +19,31 @@ source "${SCRIPT_LIB_DIR}/logging.sh"
 source "${SCRIPT_LIB_DIR}/runtime.sh"
 
 show_idle() {
+    local title="Fedora Post-Install — Output"
+    local subtitle="Pick an option from the menu on the left."
+    local sub2="Its output will stream here."
+    local width=58
+
+    # Calculate padding for title
+    local p_title=$(( (width - ${#title}) / 2 ))
+    local e_title=$(( (width - ${#title}) % 2 ))
+
+    # Calculate padding for subtitles
+    local p_sub1=$(( (width - ${#subtitle}) / 2 ))
+    local e_sub1=$(( (width - ${#subtitle}) % 2 ))
+    local p_sub2=$(( (width - ${#sub2}) / 2 ))
+    local e_sub2=$(( (width - ${#sub2}) % 2 ))
+
     clear
     echo
-    echo -e "  ${BANNER}╭──────────────────────────────────────────────────────╮${NC}"
-    echo -e "  ${BANNER}│${NC}                                                      ${BANNER}│${NC}"
-    echo -e "  ${BANNER}│${NC}    ${BOLD}Fedora Post-Install — Output${NC}                      ${BANNER}│${NC}"
-    echo -e "  ${BANNER}│${NC}                                                      ${BANNER}│${NC}"
-    echo -e "  ${BANNER}│${NC}    ${INFO}Pick an option from the menu on the left.${NC}        ${BANNER}│${NC}"
-    echo -e "  ${BANNER}│${NC}    ${INFO}Its output will stream here.${NC}                      ${BANNER}│${NC}"
-    echo -e "  ${BANNER}│${NC}                                                      ${BANNER}│${NC}"
-    echo -e "  ${BANNER}╰──────────────────────────────────────────────────────╯${NC}"
+    echo -e "  ${BANNER}╭$(printf '%.0s─' $(seq 1 $width))╮${NC}"
+    echo -e "  ${BANNER}│${NC}$(printf '%*s' $width ' ')${BANNER}│${NC}"
+    printf "  ${BANNER}│${NC}%${p_title}s${BOLD}%s%${p_title}s%${e_title}s${BANNER}│${NC}\n" "" "$title" "" ""
+    echo -e "  ${BANNER}│${NC}$(printf '%*s' $width ' ')${BANNER}│${NC}"
+    printf "  ${BANNER}│${NC}%${p_sub1}s${INFO}%s%${p_sub1}s%${e_sub1}s${BANNER}│${NC}\n" "" "$subtitle" "" ""
+    printf "  ${BANNER}│${NC}%${p_sub2}s${INFO}%s%${p_sub2}s%${e_sub2}s${BANNER}│${NC}\n" "" "$sub2" "" ""
+    echo -e "  ${BANNER}│${NC}$(printf '%*s' $width ' ')${BANNER}│${NC}"
+    echo -e "  ${BANNER}╰$(printf '%.0s─' $(seq 1 $width))╯${NC}"
     echo
     trap 'exit 0' TERM INT
     while :; do sleep 3600; done

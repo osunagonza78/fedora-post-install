@@ -75,6 +75,10 @@ cli_list() {
     for item in "${MENU_ITEMS[@]}"; do
         key="${item%%|*}"
         [[ "$key" =~ ^_ ]] && continue
+        # Extract display text (3rd field in key|cat|text|desc)
+        rest="${item#*|}"
+        text="${rest#*|}"
+        text="${text%%|*}"
         echo "  $key"
     done
     echo
@@ -155,14 +159,14 @@ fi
 # "_" for synthetic entries that don't map to a single script. The state file
 # uses these same keys to render the ✓ marker for completed scripts.
 MENU_ITEMS=(
-    "system_configuration|System Configuration|Optimize DNF, set hostname, and tune system limits."
-    "packages_installation|Packages Installation|Enable RPM Fusion, Flatpak, and install essential apps."
-    "development_installation|Development Environment Installation|Install Development Tools."
-    "virtualization_installation|Virtualization Stack|Install KVM/QEMU hypervisor and libvirt services."
-    "configure_secureboot|Secure Boot Config|Generate and enroll MOK keys for 3rd party modules."
-    "nvidia_drivers|Nvidia Drivers|Install latest proprietary drivers via Akmod."
-    "_baseline|Run Recommended Baseline|System Configuration + Packages Installation back-to-back."
-    "_exit|Exit|"
+    "system_configuration|System|System Configuration|Optimize DNF, set hostname, and tune system limits."
+    "packages_installation|System|Packages Installation|Enable RPM Fusion, Flatpak, and install essential apps."
+    "development_installation|Dev|Development Environment Installation|Install Development Tools."
+    "virtualization_installation|Dev|Virtualization Stack|Install KVM/QEMU hypervisor and libvirt services."
+    "configure_secureboot|Hardware|Secure Boot Config|Generate and enroll MOK keys for 3rd party modules."
+    "nvidia_drivers|Hardware|Nvidia Drivers|Install latest proprietary drivers via Akmod."
+    "_baseline|General|Run Recommended Baseline|System Configuration + Packages Installation back-to-back."
+    "_exit|General|Exit|"
 )
 
 # Baseline = scripts the baseline-run option chains. Keep small and
@@ -185,10 +189,15 @@ fi
 # Creates a clean, branded interface showing the tool name and purpose
 # Usage: show_header
 show_header() {
+    local title="FEDORA POST-INSTALL TOOL"
+    local width=58
+    local padding=$(( (width - ${#title}) / 2 ))
+    local extra=$(( (width - ${#title}) % 2 ))
+
     clear
-    echo -e "${BANNER}╭──────────────────────────────────────────────────────────╮${NC}"
-    echo -e "${BANNER}│${NC}             ${BOLD}FEDORA POST-INSTALL TOOL${NC}               ${BANNER}│${NC}"
-    echo -e "${BANNER}╰──────────────────────────────────────────────────────────╯${NC}"
+    echo -e "${BANNER}╭$(printf '%.0s─' $(seq 1 $width))╮${NC}"
+    printf "${BANNER}│${NC}%${padding}s${BOLD}%s%${padding}s%${extra}s${BANNER}│${NC}\n" "" "$title" "" ""
+    echo -e "${BANNER}╰$(printf '%.0s─' $(seq 1 $width))╯${NC}"
     echo ""
 }
 
@@ -202,7 +211,10 @@ show_running_state_live() {
     local script_basename="$2"
     local start_time
     start_time=$(date +%s)
-    while sleep 2; do
+    local spinner=('|' '/' '-' '\')
+    local frame=0
+
+    while sleep 0.5; do
         local elapsed=$(( $(date +%s) - start_time ))
         local mins=$((elapsed / 60))
         local secs=$((elapsed % 60))
@@ -221,7 +233,7 @@ show_running_state_live() {
 
         clear
         show_header
-        echo -e "  ${PRIMARY}▶${NC} ${BOLD}Running:${NC} ${title}"
+        printf "  ${PRIMARY}%s ${NC} ${BOLD}Running:${NC} ${title}\n" "${spinner[$frame]}"
         printf "  ${INFO}Elapsed:${NC} %dm %02ds\n" "$mins" "$secs"
         if [[ -n "$last_line" ]]; then
             echo -e "  ${INFO}Latest:${NC}  ${last_line}"
@@ -232,6 +244,8 @@ show_running_state_live() {
         echo ""
         echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
         echo -e "${INFO}Alt+←/→ switch panes  •  Ctrl+b [ scrollback${NC}"
+
+        frame=$(( (frame + 1) % 4 ))
     done
 }
 
@@ -281,21 +295,30 @@ run_script() {
         wait "$watcher_pid" 2>/dev/null || true
         tmux select-pane -t "${FPI_MENU_PANE:-:.0}"
     else
-        # Fallback when tmux is unavailable: run inline (original behaviour).
+        # Fallback when tmux is unavailable: run inline.
         clear
-        echo -e "${BANNER}╭──────────────────────────────────────────────────────────╮${NC}"
-        echo -e "${BANNER}│${NC}  ${BOLD}${window_title}${NC}"
-        echo -e "${BANNER}╰──────────────────────────────────────────────────────────╯${NC}"
+        local width=58
+        local padding=$(( (width - ${#window_title}) / 2 ))
+        local extra=$(( (width - ${#window_title}) % 2 ))
+
+        echo -e "${BANNER}╭$(printf '%.0s─' $(seq 1 $width))╮${NC}"
+        printf "${BANNER}│${NC}%${padding}s${BOLD}%s%${padding}s%${extra}s${BANNER}│${NC}\n" "" "$window_title" "" ""
+        echo -e "${BANNER}╰$(printf '%.0s─' $(seq 1 $width))╯${NC}"
+        echo -e "${INFO}Running in inline mode (tmux not available)...${NC}"
         echo ""
+
         bash "$full_path"
         local exit_code=$?
         echo ""
         echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
         if [[ $exit_code -eq 0 ]]; then
             echo -e "${SUCCESS}✓ Completed successfully!${NC}"
+        elif [[ $exit_code -eq 130 ]]; then
+            echo -e "${YELLOW}⚠ Cancelled by user${NC}"
         else
             echo -e "${WARNING}⚠ Completed with exit code: $exit_code${NC}"
         fi
+        echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
         echo -e "${INFO}Press Enter to return to menu...${NC}"
         read -r
     fi
@@ -307,65 +330,91 @@ run_script() {
 # Usage: show_menu selected_index
 show_menu() {
     local selected_index="$1"
+    local status_msg="$2"
     show_header
 
-    # Pad the visible label to a fixed column so the reverse-video highlight
-    # bar fills the row consistently instead of trailing off after each label.
-    local label_width=54
+    # Dynamic padding: calculate the max length of the display text
+    local label_width=0
+    for item in "${MENU_ITEMS[@]}"; do
+        local rest="${item#*|}"
+        local cat="${rest%%|*}"
+        local rest2="${rest#*|}"
+        local text="${rest2%%|*}"
+        [[ ${#text} -gt $label_width ]] && label_width=${#text}
+    done
+    # Add a bit of breathing room
+    label_width=$((label_width + 4))
 
+    local current_cat=""
     for i in "${!MENU_ITEMS[@]}"; do
         local item="${MENU_ITEMS[$i]}"
-        # Three-field format: key|Display|Description
+        # Format: key|cat|text|desc
         local key="${item%%|*}"
         local rest="${item#*|}"
-        local text="${rest%%|*}"
-        local desc="${rest#*|}"
-        [[ "$desc" == "$rest" ]] && desc=""  # no third field
+        local cat="${rest%%|*}"
+        local rest2="${rest#*|}"
+        local text="${rest2%%|*}"
+        local desc="${rest2#*|}"
+        [[ "$desc" == "$rest2" ]] && desc=""
 
-        # A single visible glyph for the done marker — keeps the printf width
-        # calculation honest (escape sequences inside the format string would
-        # throw off %-Ns padding).
+        # Category Header
+        if [[ "$cat" != "$current_cat" ]]; then
+            echo -e "\n  ${BOLD}${PRIMARY}--- ${cat} ---${NC}"
+            current_cat="$cat"
+        fi
+
         local glyph=" "
         if [[ ! "$key" =~ ^_ ]] && is_done "$key"; then
             glyph="✓"
         fi
 
-        # Numbering shown to the user is 1-based; index 0 reads as "press 1".
         local human_idx=$((i + 1))
 
         if [[ $i -eq $selected_index ]]; then
             printf "${HIGHLIGHT}${PRIMARY}  ►${NC}${HIGHLIGHT} ${BOLD}%s %-${label_width}s${NC}\n" \
                 "$glyph" "$text"
-            if [[ -n "$desc" ]]; then
-                printf "${HIGHLIGHT}     %-${label_width}s${NC}\n" "$desc"
-            fi
         else
             local glyph_colored="$glyph"
             [[ "$glyph" == "✓" ]] && glyph_colored="${SUCCESS}✓${NC}"
             echo -e "${PRIMARY}  ${human_idx})${NC} ${glyph_colored} ${BOLD}${text}${NC}"
-            if [[ -n "$desc" ]]; then
-                echo -e "     ${INFO}${desc}${NC}"
-            fi
         fi
-        echo ""
     done
 
+    # Description Pane
+    echo -e "\n${PRIMARY}──────────────────────────────────────────────────────────${NC}"
+    local sel_item="${MENU_ITEMS[$selected_index]}"
+    local sel_rest="${sel_item#*|}"
+    local sel_rest2="${sel_rest#*|}"
+    local sel_desc="${sel_rest2#*|}"
+    [[ -z "$sel_desc" ]] && sel_desc="No description available."
+
+    echo -e "  ${BOLD}Details:${NC}"
+    echo -e "  ${INFO}${sel_desc}${NC}"
     echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
-    echo -e "${INFO}↑↓/jk navigate  •  1-9 jump  •  Enter select  •  q quit${NC}"
-    echo -e "${INFO}Alt+←/→ switch panes  •  Ctrl+b [ scrollback${NC}"
+
+    # Status line
+    if [[ -n "$status_msg" ]]; then
+        echo -e "  ${DANGER}${status_msg}${NC}"
+    else
+        echo -e "  ${INFO}↑↓/jk navigate  •  1-9 jump  •  Enter select  •  q quit${NC}"
+    fi
+    echo -e "  ${INFO}Alt+←/→ switch panes  •  Ctrl+b [ scrollback${NC}"
     if [[ -f "$FPI_DONE_FILE" ]]; then
-        echo -e "${INFO}State: ${FPI_DONE_FILE}${NC}"
+        echo -e "  ${INFO}State: ${FPI_DONE_FILE}${NC}"
     fi
 }
 
 # Map a key (script basename without .sh) to its display title from MENU_ITEMS,
 # falling back to the key itself when not found. Used by run_by_key.
 title_for_key() {
-    local needle="$1" item key text rest
+    local needle="$1" item key cat text rest
     for item in "${MENU_ITEMS[@]}"; do
         key="${item%%|*}"
         if [[ "$key" == "$needle" ]]; then
+            # Format: key|cat|text|desc
             rest="${item#*|}"
+            cat="${rest%%|*}"
+            rest="${rest#*|}"
             text="${rest%%|*}"
             echo "$text"
             return 0
@@ -496,6 +545,7 @@ read_key() {
 main_loop() {
     local selected=0
     local total_options=${#MENU_ITEMS[@]}
+    local last_error=""
 
     # Preflight runs once before the menu is shown — a failure here is fatal
     # because everything downstream needs network + sudo.
@@ -509,15 +559,15 @@ main_loop() {
     fi
 
     while true; do
-        show_menu $selected
+        show_menu "$selected" "$last_error"
         local k
         k=$(read_key)
 
         case $k in
-            "UP")   [[ $selected -gt 0 ]] && ((selected--)) ;;
-            "DOWN") [[ $selected -lt $((total_options - 1)) ]] && ((selected++)) ;;
-            "HOME") selected=0 ;;
-            "END")  selected=$((total_options - 1)) ;;
+            "UP")   [[ $selected -gt 0 ]] && ((selected--)); last_error="" ;;
+            "DOWN") [[ $selected -lt $((total_options - 1)) ]] && ((selected++)); last_error="" ;;
+            "HOME") selected=0; last_error="" ;;
+            "END")  selected=$((total_options - 1)); last_error="" ;;
             "QUIT") dispatch_selection "$((total_options - 1))" ;;
             "ENTER") dispatch_selection "$selected" ;;
             [1-9])
@@ -526,8 +576,12 @@ main_loop() {
                 if [[ $idx -lt $total_options ]]; then
                     selected=$idx
                     dispatch_selection "$idx"
+                else
+                    last_error="⚠ Invalid option: $k"
                 fi
                 ;;
+            "OTHER") last_error="⚠ Invalid key pressed" ;;
+            *) last_error="⚠ Invalid key pressed" ;;
         esac
     done
 }
