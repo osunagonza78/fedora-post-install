@@ -177,6 +177,7 @@ MENU_ITEMS=(
     "virtualization_installation|Dev|Virtualization Stack|Install KVM/QEMU hypervisor and libvirt services."
     "configure_secureboot|Hardware|Secure Boot Config|Generate and enroll MOK keys for 3rd party modules."
     "nvidia_drivers|Hardware|Nvidia Drivers|Install latest proprietary drivers via Akmod."
+    "install_ai_tools|AI|AI Tools Installation|Install Ollama, OpenCode, and Claude AI tools."
     "_baseline|General|Run Recommended Baseline|System Configuration + Packages Installation back-to-back."
     "_exit|General|Exit|"
 )

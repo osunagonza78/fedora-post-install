@@ -9,14 +9,15 @@ A bash-based utility to automate the "Day 1" tasks of a Fedora install. This pro
 Note: This is a personal project tailored to my specific use case. It is published as-is, but users are encouraged to modify the scripts to suit their own hardware and software preferences.
 
 ## ✨ Features
-
-- **🔧 System Configuration** - DNF optimizations, hostname setup, system limits tuning
-- **📦 Package Management** - Essential packages, Flatpaks, multimedia codecs, and development tools installation
-- **💻 Development Environment** - Development tools and container support setup
-- **🖥️ Virtualization Stack** - KVM/QEMU hypervisor and libvirt services for virtual machines
-- **🔒 Secure Boot Support** - Automatic MOK key generation and enrollment for 3rd-party modules
-- **🎮 NVIDIA Drivers** - Latest proprietary drivers via Akmod with automatic updates
-- **📺 Enhanced Output Display** - Clean, real-time command execution with progress tracking
+ 
+ - **🔧 System Configuration** - DNF optimizations, hostname setup, system limits tuning
+ - **📦 Package Management** - Essential packages, Flatpaks, multimedia codecs, and development tools installation
+ - **💻 Development Environment** - Development tools and container support setup
+ - **🖥️ Virtualization Stack** - KVM/QEMU hypervisor and libvirt services for virtual machines
+ - **🔒 Secure Boot Support** - Automatic MOK key generation and enrollment for 3rd-party modules
+ - **🤖 AI Tools Installation** - Streamlined setup for Ollama, OpenCode, and Claude
+ - **🎮 NVIDIA Drivers** - Latest proprietary drivers via Akmod with automatic updates
+ - **📺 Enhanced Output Display** - Clean, real-time command execution with progress tracking
 
 ## 📋 Prerequisites
 
