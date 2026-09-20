@@ -59,7 +59,16 @@ enable_secure_boot() {
 	
 	# Copy the key to the certs folder and import into MOK database
 	log_info "Importing generated CA key into Machine Owner Key database..."
-	sudo mokutil --import /etc/pki/akmods/certs/public_key.der
+	log_info "You will be prompted to enter and confirm a password for the MOK enrollment. Please enter it carefully."
+	
+	# We use 'sudo' carefully here. If the script is run as root, 'sudo' is redundant
+	# but usually harmless. However, to ensure the TTY is preserved for mokutil's
+	# password prompt, we call it directly if we are root.
+	if [ "$EUID" -ne 0 ]; then
+		sudo mokutil --import /etc/pki/akmods/certs/public_key.der
+	else
+		mokutil --import /etc/pki/akmods/certs/public_key.der
+	fi
 	check_command_status $? "MOK import" || return 1
 	
 	log_success "Secure Boot configuration completed successfully"

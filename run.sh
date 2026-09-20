@@ -211,7 +211,7 @@ show_running_state_live() {
     local script_basename="$2"
     local start_time
     start_time=$(date +%s)
-    local spinner=('|' '/' '-' '\')
+    local spinner=("|" "/" "-" "\\")
     local frame=0
 
     while sleep 0.5; do
