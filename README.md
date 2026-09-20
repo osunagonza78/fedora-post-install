@@ -114,13 +114,14 @@ init) are written to whichever rc file matches `$SHELL`:
 | fish  | `~/.config/fish/config.fish` (fish syntax) |
 
 ## ⚠️ Important Notes
-
-- Always review scripts before running
-- Backup important data before system modifications
-- Some features require system reboot
-- NVIDIA driver installation may disable secure boot temporarily
-- Virtualization requires CPU hardware support (Intel VT-x or AMD-V)
-- The enhanced interface shows live command output - you can interrupt with Ctrl+C if needed
+ 
+ - Always review scripts before running
+ - Backup important data before system modifications
+ - Some features require system reboot
+ - **Secure Boot Enrollment**: When configuring Secure Boot, you will be prompted to set a password for the MOK (Machine Owner Key). Keep this password safe; you will need to enter it once during the next reboot in the BIOS/UEFI interface to finalize enrollment.
+ - NVIDIA driver installation may disable secure boot temporarily
+ - Virtualization requires CPU hardware support (Intel VT-x or AMD-V)
+ - The enhanced interface shows live command output - you can interrupt with Ctrl+C if needed
 
 ## 🏗️ Project Structure
 

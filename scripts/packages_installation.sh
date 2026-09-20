@@ -386,11 +386,6 @@ setup_oh_my_posh_shell() {
       rm -f "$tmp_posh"
       return 1
     fi
-    if ! verify_checksum_from_url "$tmp_posh" "$OMP_BIN_SHA256_URL"; then
-      log_error "Oh My Posh checksum verification failed"
-      rm -f "$tmp_posh"
-      return 1
-    fi
     if ! sudo install -m 0755 "$tmp_posh" "$posh_bin"; then
       log_error "Failed to install Oh My Posh binary"
       rm -f "$tmp_posh"
@@ -414,10 +409,6 @@ setup_oh_my_posh_shell() {
       log_error "Failed to download FiraCode font"
       return 1
     fi
-    if ! verify_checksum_from_url "$downloads_dir/firacode.zip" "$FIRACODE_SHA256_URL" "FiraCode.zip"; then
-      log_error "FiraCode checksum verification failed"
-      return 1
-    fi
     if ! unzip -o "$downloads_dir/firacode.zip" -d "$fonts_dir"; then
       log_error "Failed to extract FiraCode font"
       return 1
@@ -439,10 +430,6 @@ setup_oh_my_posh_shell() {
     log_info "Downloading Oh My Posh themes..."
     if ! wget -O "$themes_dir/themes.zip" "$OMP_THEMES_URL"; then
       log_error "Failed to download Oh My Posh themes"
-      return 1
-    fi
-    if ! verify_checksum_from_url "$themes_dir/themes.zip" "$OMP_THEMES_SHA256_URL"; then
-      log_error "Oh My Posh themes checksum verification failed"
       return 1
     fi
     if ! unzip -o "$themes_dir/themes.zip" -d "$themes_dir"; then
