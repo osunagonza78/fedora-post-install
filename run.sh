@@ -33,6 +33,18 @@
 # --- Configuration ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/"
 
+# Helper to check if Secure Boot is enabled.
+# Returns 0 if enabled, 1 otherwise.
+is_secure_boot_enabled() {
+    if ! command -v mokutil &>/dev/null; then
+        return 1
+    fi
+    if mokutil --sb-state | grep -iq "enabled"; then
+        return 0
+    fi
+    return 1
+}
+
 # --- Hard precondition: this only runs on Fedora 41+ ---
 # Sourced here (not inside main_loop) so the guard fires before tmux exec.
 # require_fedora itself exits 1 if /etc/fedora-release is missing or the
@@ -333,9 +345,25 @@ show_menu() {
     local status_msg="$2"
     show_header
 
+    # Filter visible items and maintain a mapping to original indices
+    local visible_items=()
+    local original_indices=()
+    for i in "${!MENU_ITEMS[@]}"; do
+        local item="${MENU_ITEMS[$i]}"
+        local key="${item%%|*}"
+        if [[ "$key" == "configure_secureboot" ]] && ! is_secure_boot_enabled; then
+            continue
+        fi
+        visible_items+=("$item")
+        original_indices+=("$i")
+    done
+
+    # The selected_index passed to show_menu is now relative to visible_items
+    local total_visible=${#visible_items[@]}
+
     # Dynamic padding: calculate the max length of the display text
     local label_width=0
-    for item in "${MENU_ITEMS[@]}"; do
+    for item in "${visible_items[@]}"; do
         local rest="${item#*|}"
         local cat="${rest%%|*}"
         local rest2="${rest#*|}"
@@ -346,8 +374,8 @@ show_menu() {
     label_width=$((label_width + 4))
 
     local current_cat=""
-    for i in "${!MENU_ITEMS[@]}"; do
-        local item="${MENU_ITEMS[$i]}"
+    for i in "${!visible_items[@]}"; do
+        local item="${visible_items[$i]}"
         # Format: key|cat|text|desc
         local key="${item%%|*}"
         local rest="${item#*|}"
@@ -382,14 +410,18 @@ show_menu() {
 
     # Description Pane
     echo -e "\n${PRIMARY}──────────────────────────────────────────────────────────${NC}"
-    local sel_item="${MENU_ITEMS[$selected_index]}"
-    local sel_rest="${sel_item#*|}"
-    local sel_rest2="${sel_rest#*|}"
-    local sel_desc="${sel_rest2#*|}"
-    [[ -z "$sel_desc" ]] && sel_desc="No description available."
-
-    echo -e "  ${BOLD}Details:${NC}"
-    echo -e "  ${INFO}${sel_desc}${NC}"
+    if [[ $selected_index -lt $total_visible ]]; then
+        local sel_item="${visible_items[$selected_index]}"
+        local sel_rest="${sel_item#*|}"
+        local sel_rest2="${sel_rest#*|}"
+        local sel_desc="${sel_rest2#*|}"
+        [[ -z "$sel_desc" ]] && sel_desc="No description available."
+        echo -e "  ${BOLD}Details:${NC}"
+        echo -e "  ${INFO}${sel_desc}${NC}"
+    else
+        echo -e "  ${BOLD}Details:${NC}"
+        echo -e "  ${INFO}No item selected.${NC}"
+    fi
     echo -e "${PRIMARY}──────────────────────────────────────────────────────────${NC}"
 
     # Status line
@@ -402,6 +434,25 @@ show_menu() {
     if [[ -f "$FPI_DONE_FILE" ]]; then
         echo -e "  ${INFO}State: ${FPI_DONE_FILE}${NC}"
     fi
+}
+
+# Map a visible index to the original MENU_ITEMS index.
+get_original_index() {
+    local visible_idx="$1"
+    local current_idx=0
+    for i in "${!MENU_ITEMS[@]}"; do
+        local item="${MENU_ITEMS[$i]}"
+        local key="${item%%|*}"
+        if [[ "$key" == "configure_secureboot" ]] && ! is_secure_boot_enabled; then
+            continue
+        fi
+        if [[ $current_idx -eq $visible_idx ]]; then
+            echo "$i"
+            return 0
+        fi
+        ((current_idx++))
+    done
+    return 1
 }
 
 # Map a key (script basename without .sh) to its display title from MENU_ITEMS,
@@ -544,7 +595,6 @@ read_key() {
 # - Provides feedback for each action
 main_loop() {
     local selected=0
-    local total_options=${#MENU_ITEMS[@]}
     local last_error=""
 
     # Preflight runs once before the menu is shown — a failure here is fatal
@@ -559,23 +609,45 @@ main_loop() {
     fi
 
     while true; do
+        # Determine current visible items to handle indexing correctly
+        local visible_items=()
+        for item in "${MENU_ITEMS[@]}"; do
+            local key="${item%%|*}"
+            if [[ "$key" == "configure_secureboot" ]] && ! is_secure_boot_enabled; then
+                continue
+            fi
+            visible_items+=("$item")
+        done
+        local total_visible=${#visible_items[@]}
+
         show_menu "$selected" "$last_error"
         local k
         k=$(read_key)
 
         case $k in
             "UP")   [[ $selected -gt 0 ]] && ((selected--)); last_error="" ;;
-            "DOWN") [[ $selected -lt $((total_options - 1)) ]] && ((selected++)); last_error="" ;;
+            "DOWN") [[ $selected -lt $((total_visible - 1)) ]] && ((selected++)); last_error="" ;;
             "HOME") selected=0; last_error="" ;;
-            "END")  selected=$((total_options - 1)); last_error="" ;;
-            "QUIT") dispatch_selection "$((total_options - 1))" ;;
-            "ENTER") dispatch_selection "$selected" ;;
+            "END")  selected=$((total_visible - 1)); last_error="" ;;
+            "QUIT") 
+                # Map visible index to original index before dispatching
+                local original_idx
+                original_idx=$(get_original_index "$((total_visible - 1))")
+                dispatch_selection "$original_idx" 
+                ;;
+            "ENTER") 
+                local original_idx
+                original_idx=$(get_original_index "$selected")
+                dispatch_selection "$original_idx" 
+                ;;
             [1-9])
-                # 1-based direct selection — jump to the entry and dispatch.
-                local idx=$((k - 1))
-                if [[ $idx -lt $total_options ]]; then
-                    selected=$idx
-                    dispatch_selection "$idx"
+                # 1-based direct selection
+                local visible_idx=$((k - 1))
+                if [[ $visible_idx -lt $total_visible ]]; then
+                    selected=$visible_idx
+                    local original_idx
+                    original_idx=$(get_original_index "$visible_idx")
+                    dispatch_selection "$original_idx"
                 else
                     last_error="⚠ Invalid option: $k"
                 fi

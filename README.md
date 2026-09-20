@@ -38,43 +38,43 @@ chmod +x run.sh
 **Note**: No sudo required for the main script - it handles privilege escalation internally when needed.
 
 ## 📖 Usage Guide
-
-`run.sh` launches a tmux split-pane menu on its own dedicated socket. The
-menu lives in the left pane; output streams in the right pane. A green ✓
-appears next to any entry already completed in this state directory.
-
-```
-╭──────────────────────────────────────────────────────────╮
-│             FEDORA POST-INSTALL TOOL                     │
-╰──────────────────────────────────────────────────────────╯
-
-  1) ✓ System Configuration
-       Optimize DNF, set hostname, and tune system limits.
-
-  2)   Packages Installation
-       Enable RPM Fusion, Flatpak, and install essential apps.
-
-  3)   Development Environment Installation
-       Install Development Tools.
-
-  4)   Virtualization Stack
-       Install KVM/QEMU hypervisor and libvirt services.
-
-  5)   Secure Boot Config
-       Generate and enroll MOK keys for 3rd party modules.
-
-  6)   Nvidia Drivers
-       Install latest proprietary drivers via Akmod.
-
-  7)   Run Recommended Baseline
-       System Configuration + Packages Installation back-to-back.
-
-  8)   Exit
-
-──────────────────────────────────────────────────────────
-↑↓/jk navigate  •  1-9 jump  •  Enter select  •  q quit
-Alt+←/→ switch panes  •  Ctrl+b [ scrollback
-```
+ 
+ `run.sh` launches a tmux split-pane menu on its own dedicated socket. The
+ menu lives in the left pane; output streams in the right pane. A green ✓
+ appears next to any entry already completed in this state directory.
+ 
+ ```
+ ╭──────────────────────────────────────────────────────────╮
+ │             FEDORA POST-INSTALL TOOL                     │
+ ╰──────────────────────────────────────────────────────────╯
+ 
+   1) ✓ System Configuration
+        Optimize DNF, set hostname, and tune system limits.
+ 
+   2)   Packages Installation
+        Enable RPM Fusion, Flatpak, and install essential apps.
+ 
+   3)   Development Environment Installation
+        Install Development Tools.
+ 
+   4)   Virtualization Stack
+        Install KVM/QEMU hypervisor and libvirt services.
+ 
+   5)   Secure Boot Config (Visible only if Secure Boot is enabled)
+        Generate and enroll MOK keys for 3rd party modules.
+ 
+   6)   Nvidia Drivers
+        Install latest proprietary drivers via Akmod.
+ 
+   7)   Run Recommended Baseline
+        System Configuration + Packages Installation back-to-back.
+ 
+   8)   Exit
+ 
+ ──────────────────────────────────────────────────────────
+ ↑↓/jk navigate  •  1-9 jump  •  Enter select  •  q quit
+ Alt+←/→ switch panes  •  Ctrl+b [ scrollback
+ ```
 
 ### CLI flags
 
@@ -124,34 +124,41 @@ init) are written to whichever rc file matches `$SHELL`:
  - The enhanced interface shows live command output - you can interrupt with Ctrl+C if needed
 
 ## 🏗️ Project Structure
-
-```
-fedora-post-install/
-├── run.sh                              # Interactive launcher + CLI entry
-├── scripts/                            # Individual installation scripts
-│   ├── system_configuration.sh
-│   ├── packages_installation.sh
-│   ├── development_installation.sh
-│   ├── virtualization_installation.sh
-│   ├── configure_secureboot.sh
-│   └── nvidia_drivers.sh
-├── lib/                                # Shared libraries
-│   ├── ui.sh                           # Colour palette + style codes
-│   ├── logging.sh                      # log_info/warning/error/success
-│   ├── verify.sh                       # require_fedora, confirm_reboot, checksum helpers
-│   ├── runtime.sh                      # State paths, dry-run sudo override, mark_done
-│   ├── shellrc.sh                      # detect_shell_rc, append_if_missing
-│   ├── output_pane.sh                  # Right-pane runner (tees to log)
-│   ├── package_utils.sh                # install_packages helper
-│   └── versions.sh                     # Pinned URLs + SHA-256 sibling refs
-├── config/
-│   └── profile.env.example             # Copy to profile.env to override defaults
-├── .github/workflows/
-│   └── shellcheck.yml                  # lint on every PR
-├── IMPROVEMENTS.md                     # Reliability/usability backlog
-├── README.md                           # This documentation
-└── LICENSE                             # GPL v3.0
-```
+ 
+ ```
+ fedora-post-install/
+ ├── run.sh                              # Interactive launcher + CLI entry
+ ├── scripts/                            # Individual installation scripts
+ │   ├── system_configuration.sh
+ │   ├── packages_installation.sh
+ │   ├── development_installation.sh
+ │   ├── virtualization_installation.sh
+ │   ├── configure_secureboot.sh
+ │   └── nvidia_drivers.sh
+ ├── lib/                                # Shared libraries
+ │   ├── ui.sh                           # Colour palette + style codes
+ │   ├── logging.sh                      # log_info/warning/error/success
+ │   ├── verify.sh                       # require_fedora, confirm_reboot, checksum helpers
+ │   ├── runtime.sh                      # State paths, dry-run sudo override, mark_done
+ │   ├── shellrc.sh                      # detect_shell_rc, append_if_missing
+ │   ├── output_pane.sh                  # Right-pane runner (tees to log)
+ │   ├── package_utils.sh                # install_packages helper
+ │   └── versions.sh                     # Pinned URLs + SHA-256 sibling refs
+ ├── config/
+ │   └── profile.env.example             # Copy to profile.env to override defaults
+ ├── tests/                              # BATS test suite
+ │   ├── cli.bats
+ │   ├── dry_run.bats
+ │   ├── runtime.bats
+ │   ├── syntax.bats
+ │   └── test_helper.bash
+ ├── .github/workflows/
+ │   ├── bats.yml                       # BATS test workflow
+ │   └── shellcheck.yml                 # lint on every PR
+ ├── docs/                              # Project documentation
+ ├── LICENSE                             # GPL v3.0
+ └── README.md                           # This documentation
+ ```
 
 ## 🔧 Technical Details
 
