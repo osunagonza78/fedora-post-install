@@ -224,50 +224,80 @@ configure_firefox_codecs() {
 #
 # @return 0 if Microsoft fonts are installed successfully
 # @return 1 if font installation fails
+
 install_microsoft_fonts() {
   if [[ "${ENABLE_MS_FONTS:-1}" != "1" ]]; then
     log_info "Microsoft fonts disabled by profile.env — skipping"
     return 0
-  fi
-  log_info "Performing fonts setup..."
+  fi  
+  log_info "Installing Microsoft Core Fonts..."
 
-  # Install font management dependencies
-  if ! sudo dnf install -y curl cabextract xorg-x11-font-utils fontconfig; then
-    log_error "Failed to install font dependencies"
+  local srpm_url="https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.src.rpm"
+  local build_dir
+  local srpm
+  local built_rpm
+
+  # Install required build and runtime dependencies.
+  if ! sudo dnf install -y \
+      rpm-build \
+      curl \
+      cabextract \
+      xorg-x11-font-utils \
+      fontconfig; then
+    log_error "Failed to install Microsoft fonts dependencies"
     return 1
   fi
 
-  # Download Microsoft Core Fonts installer with curl to a tempfile, install
-  # the local RPM with dnf, then remove the downloaded file.
-  # dnf install (vs. rpm -i) is idempotent and resolves dependencies, where
-  # rpm -i errors on the second run.
-  local ms_fonts_url="https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm"
-  local ms_fonts_rpm
-  if ! ms_fonts_rpm=$(mktemp -t msttcore-fonts-installer.XXXXXX.rpm); then
-    log_error "Failed to create tempfile for Microsoft fonts installer"
+  # Create temporary build directory.
+  if ! build_dir=$(mktemp -d -t msttcore-fonts.XXXXXX); then
+    log_error "Failed to create Microsoft fonts build directory"
     return 1
   fi
 
-  if ! curl -fsSL -o "$ms_fonts_rpm" "$ms_fonts_url"; then
-    log_error "Failed to download Microsoft fonts installer"
-    rm -f "$ms_fonts_rpm"
+  srpm="$build_dir/msttcore-fonts-installer.src.rpm"
+
+  # Download original source RPM.
+  if ! curl -fsSL --retry 3 -o "$srpm" "$srpm_url"; then
+    log_error "Failed to download Microsoft fonts source RPM"
+    rm -rf "$build_dir"
     return 1
   fi
 
-  if ! sudo dnf install -y "$ms_fonts_rpm"; then
-    log_error "Failed to install Microsoft fonts"
-    rm -f "$ms_fonts_rpm"
+  # Rebuild RPM using Fedora's current RPM tooling.
+  if ! rpmbuild --rebuild \
+      --define "_topdir $build_dir/rpmbuild" \
+      "$srpm"; then
+    log_error "Failed to rebuild Microsoft fonts RPM"
+    rm -rf "$build_dir"
     return 1
   fi
 
-  rm -f "$ms_fonts_rpm"
+  built_rpm="$build_dir/rpmbuild/RPMS/noarch/msttcore-fonts-installer-2.6-1.noarch.rpm"
 
-  # Update system font cache to recognize new fonts
-  if ! sudo fc-cache -fv; then
-    log_warning "Failed to update font cache"
+  if [[ ! -s "$built_rpm" ]]; then
+    log_error "Rebuilt Microsoft fonts RPM not found"
+    rm -rf "$build_dir"
+    return 1
   fi
-  
-  log_success "Microsoft fonts installed"
+
+  # Install rebuilt package through DNF.
+  if ! sudo dnf install -y "$built_rpm"; then
+    log_error "Failed to install rebuilt Microsoft fonts RPM"
+    rm -rf "$build_dir"
+    return 1
+  fi
+
+  # Refresh font cache.
+  if ! sudo fc-cache -f; then
+    log_error "Failed to refresh Microsoft fonts cache"
+    rm -rf "$build_dir"
+    return 1
+  fi
+
+  rm -rf "$build_dir"
+
+  log_success "Microsoft Core Fonts installed successfully"
+  return 0
 }
 
 # Function to install Brave Browser

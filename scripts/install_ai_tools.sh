@@ -22,11 +22,11 @@ require_fedora
 # -----------------------------------------------------------------------------
 # TOOL DEFINITIONS
 # -----------------------------------------------------------------------------
-# Format: "Display Name|Install Command|Check Command"
+# Format: "Display Name::Install Command::Check Command"
 AI_TOOLS=(
-    "Ollama|curl -fsSL https://ollama.com/install.sh | sh|ollama"
-    "OpenCode|curl -fsSL https://opencode.ai/v2/install | bash|opencode"
-    "Claude|curl -fsSL https://claude.ai/install.sh | bash|claude"
+    "Ollama::curl -fsSL https://ollama.com/install.sh | sh::ollama"
+    "OpenCode::curl -fsSL https://opencode.ai/v2/install | bash::opencode"
+    "Claude::curl -fsSL https://claude.ai/install.sh | bash::claude"
 )
 
 # -----------------------------------------------------------------------------
@@ -84,7 +84,7 @@ select_and_install_tools() {
     
     local i=1
     for tool in "${AI_TOOLS[@]}"; do
-        local name="${tool%%|*}"
+        local name="${tool%%::*}"
         echo "  $i) $name"
         ((i++))
     done
@@ -131,11 +131,11 @@ select_and_install_tools() {
     # Perform installation of selected tools
     local failures=0
     for tool_entry in "${tools_to_install[@]}"; do
-        # Split the tool entry: Name|InstallCmd|CheckCmd
-        local name="${tool_entry%%|*}"
-        local remaining="${tool_entry#*|}"
-        local install_cmd="${remaining%%|*}"
-        local check_cmd="${remaining#*|}"
+        # Split the tool entry: Name::InstallCmd::CheckCmd
+        local name="${tool_entry%%::*}"
+        local remaining="${tool_entry#*::}"
+        local install_cmd="${remaining%%::*}"
+        local check_cmd="${remaining#*::}"
 
         if ! install_tool "$name" "$install_cmd" "$check_cmd"; then
             ((failures++))

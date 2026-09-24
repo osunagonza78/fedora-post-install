@@ -70,6 +70,8 @@ enable_secure_boot() {
 		mokutil --import /etc/pki/akmods/certs/public_key.der
 	fi
 	check_command_status $? "MOK import" || return 1
+	log_info "If a password prompt appeared, please enter your MOK password and then press ENTER to continue."
+	read -r -p "Press ENTER after entering the MOK password: "
 	
 	log_success "Secure Boot configuration completed successfully"
 }
